@@ -79,9 +79,20 @@ struct BotProfile {
 
 // @chunk telegram-adapter/runtime
 pub async fn run(options: TelegramOptions) -> Result<()> {
-    let token = resolve_bot_token(options.bot_token)?;
-    let bot_profile = telegram_get_me(&token).await?;
     let state_path = resolve_state_path(options.state_path)?;
+    let (token, token_source) = resolve_bot_token(options.bot_token)?;
+    eprintln!("kelix-adapter: provider=telegram");
+    eprintln!("kelix-adapter: gateway={}", options.gateway_url);
+    eprintln!("kelix-adapter: core_bin={}", options.core_bin);
+    eprintln!("kelix-adapter: state_path={}", state_path.display());
+    eprintln!("kelix-adapter: token_source={token_source}");
+
+    let bot_profile = telegram_get_me(&token).await?;
+    eprintln!(
+        "kelix-adapter: telegram_bot=@{} id={}",
+        bot_profile.username, bot_profile.id
+    );
+
     let mut state = load_state(&state_path).await?;
     let mut pending_approvals: HashMap<String, PendingApproval> = HashMap::new();
 
@@ -570,13 +581,18 @@ async fn save_state(path: &Path, state: &TelegramState) -> Result<()> {
 }
 // @end-chunk
 
-fn resolve_bot_token(input: Option<String>) -> Result<String> {
-    match input.or_else(|| std::env::var("TELEGRAM_BOT_TOKEN").ok()) {
-        Some(token) if !token.trim().is_empty() => Ok(token),
-        _ => Err(anyhow::anyhow!(
-            "telegram bot token missing; pass --bot-token or set TELEGRAM_BOT_TOKEN"
-        )),
+fn resolve_bot_token(input: Option<String>) -> Result<(String, &'static str)> {
+    if let Some(token) = input.filter(|v| !v.trim().is_empty()) {
+        return Ok((token, "cli_flag"));
     }
+    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN") {
+        if !token.trim().is_empty() {
+            return Ok((token, "env:TELEGRAM_BOT_TOKEN"));
+        }
+    }
+    Err(anyhow::anyhow!(
+        "telegram bot token missing; pass --bot-token or set TELEGRAM_BOT_TOKEN"
+    ))
 }
 
 fn resolve_state_path(input: Option<PathBuf>) -> Result<PathBuf> {
