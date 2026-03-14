@@ -71,9 +71,16 @@ struct SessionEntry {
     id: String,
 }
 
+#[derive(Debug, Clone)]
+struct BotProfile {
+    id: i64,
+    username: String,
+}
+
 // @chunk telegram-adapter/runtime
 pub async fn run(options: TelegramOptions) -> Result<()> {
     let token = resolve_bot_token(options.bot_token)?;
+    let bot_profile = telegram_get_me(&token).await?;
     let state_path = resolve_state_path(options.state_path)?;
     let mut state = load_state(&state_path).await?;
     let mut pending_approvals: HashMap<String, PendingApproval> = HashMap::new();
@@ -106,8 +113,7 @@ pub async fn run(options: TelegramOptions) -> Result<()> {
             let Message::Text(text) = frame else {
                 continue;
             };
-            let parsed = serde_json::from_str::<GatewayOutbound>(&text);
-            if let Ok(event) = parsed {
+            if let Ok(event) = serde_json::from_str::<GatewayOutbound>(&text) {
                 let _ = gateway_events_tx.send(RuntimeEvent::Gateway(event)).await;
             }
         }
@@ -128,6 +134,7 @@ pub async fn run(options: TelegramOptions) -> Result<()> {
             RuntimeEvent::Telegram(update) => {
                 handle_telegram_update(
                     &token,
+                    &bot_profile,
                     &options.core_bin,
                     &ws_tx,
                     &state_path,
@@ -150,6 +157,7 @@ pub async fn run(options: TelegramOptions) -> Result<()> {
 // @chunk telegram-adapter/event-handlers
 async fn handle_telegram_update(
     token: &str,
+    bot_profile: &BotProfile,
     core_bin: &str,
     ws_tx: &mpsc::UnboundedSender<String>,
     state_path: &Path,
@@ -157,18 +165,30 @@ async fn handle_telegram_update(
     pending_approvals: &mut HashMap<String, PendingApproval>,
     update: TelegramUpdate,
 ) -> Result<()> {
-    let Some(message) = update.message else {
-        return Ok(());
-    };
-    let Some(text) = message.text.as_deref() else {
+    let Some(message) = update.message.or(update.edited_message) else {
         return Ok(());
     };
     if message.chat.kind != "group" && message.chat.kind != "supergroup" {
         return Ok(());
     }
+    if message.from.as_ref().map(|u| u.is_bot).unwrap_or(false) {
+        return Ok(());
+    }
+    if message
+        .from
+        .as_ref()
+        .map(|u| u.id == bot_profile.id)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
 
+    let Some(raw_text) = message.text.as_deref() else {
+        return Ok(());
+    };
     let chat_id = message.chat.id;
-    if let Some((cmd, args)) = parse_command(text) {
+
+    if let Some((cmd, args)) = parse_command(raw_text) {
         match cmd.as_str() {
             "status" => {
                 let body = match state.chat_bindings.get(&chat_id) {
@@ -233,21 +253,40 @@ async fn handle_telegram_update(
                     telegram_send_message(token, chat_id, "invalid choice").await?;
                     return Ok(());
                 };
-                send_gateway_approval_response(
-                    ws_tx,
-                    &pending.session_id,
-                    request_id,
-                    choice.as_str(),
-                )?;
+                send_gateway_approval_response(ws_tx, &pending.session_id, request_id, &choice)?;
                 pending_approvals.remove(request_id);
                 telegram_send_message(token, chat_id, "approval sent").await?;
+                return Ok(());
+            }
+            "run" | "ask" => {
+                let Some(prompt_text) = normalize_prompt_text(args, &bot_profile.username) else {
+                    telegram_send_message(token, chat_id, "usage: /ask <message>").await?;
+                    return Ok(());
+                };
+                let session_id = ensure_bound_session(
+                    token,
+                    core_bin,
+                    ws_tx,
+                    state_path,
+                    state,
+                    chat_id,
+                    message.chat.title.as_deref(),
+                )
+                .await?;
+                let sender_id = message
+                    .from
+                    .as_ref()
+                    .map(|u| format!("tg:{}", u.id))
+                    .unwrap_or_else(|| "tg:unknown".to_string());
+                send_gateway_session_resume(ws_tx, &session_id)?;
+                send_gateway_user_message(ws_tx, &session_id, &sender_id, &prompt_text)?;
                 return Ok(());
             }
             "help" => {
                 telegram_send_message(
                     token,
                     chat_id,
-                    "commands: /status, /rebind, /approve <request_id> <choice|index>",
+                    "commands: /ask <text>, /run <text>, /status, /rebind, /approve <request_id> <choice|index>",
                 )
                 .await?;
                 return Ok(());
@@ -256,43 +295,59 @@ async fn handle_telegram_update(
         }
     }
 
-    let session_id = match state.chat_bindings.get(&chat_id).cloned() {
-        Some(existing) => existing,
-        None => {
-            let Some(bound) = auto_bind_chat(
-                core_bin,
-                ws_tx,
-                state_path,
-                state,
-                chat_id,
-                message.chat.title.as_deref(),
-            )
-            .await?
-            else {
-                telegram_send_message(
-                    token,
-                    chat_id,
-                    "no matching session for group title. start locally with --session <group_title> then send /rebind",
-                )
-                .await?;
-                return Ok(());
-            };
-            telegram_send_message(token, chat_id, &format!("auto-bound to session: {bound}"))
-                .await?;
-            bound
-        }
+    let Some(prompt_text) = normalize_prompt_text(raw_text, &bot_profile.username) else {
+        return Ok(());
     };
-
+    let session_id = ensure_bound_session(
+        token,
+        core_bin,
+        ws_tx,
+        state_path,
+        state,
+        chat_id,
+        message.chat.title.as_deref(),
+    )
+    .await?;
     let sender_id = message
         .from
         .as_ref()
         .map(|u| format!("tg:{}", u.id))
         .unwrap_or_else(|| "tg:unknown".to_string());
+
     // Keep Telegram behavior close to TUI: opportunistically resume before
     // each message so suspended sessions can receive input immediately.
     send_gateway_session_resume(ws_tx, &session_id)?;
-    send_gateway_user_message(ws_tx, &session_id, &sender_id, text)?;
+    send_gateway_user_message(ws_tx, &session_id, &sender_id, &prompt_text)?;
     Ok(())
+}
+
+async fn ensure_bound_session(
+    token: &str,
+    core_bin: &str,
+    ws_tx: &mpsc::UnboundedSender<String>,
+    state_path: &Path,
+    state: &mut TelegramState,
+    chat_id: i64,
+    chat_title: Option<&str>,
+) -> Result<String> {
+    if let Some(existing) = state.chat_bindings.get(&chat_id).cloned() {
+        return Ok(existing);
+    }
+
+    let Some(bound) =
+        auto_bind_chat(core_bin, ws_tx, state_path, state, chat_id, chat_title).await?
+    else {
+        telegram_send_message(
+            token,
+            chat_id,
+            "no matching session for group title. start locally with --session <group_title> then send /rebind",
+        )
+        .await?;
+        anyhow::bail!("session not bound for chat {chat_id}");
+    };
+
+    telegram_send_message(token, chat_id, &format!("auto-bound to session: {bound}")).await?;
+    Ok(bound)
 }
 
 async fn handle_gateway_event(
@@ -431,7 +486,7 @@ async fn poll_telegram_loop(
         let payload = json!({
             "offset": offset,
             "timeout": poll_timeout_secs,
-            "allowed_updates": ["message"]
+            "allowed_updates": ["message", "edited_message"]
         });
         match telegram_api::<Vec<TelegramUpdate>>(&token, "getUpdates", &payload).await {
             Ok(updates) => {
@@ -535,6 +590,32 @@ fn resolve_state_path(input: Option<PathBuf>) -> Result<PathBuf> {
         .join("telegram-state.json"))
 }
 
+fn normalize_prompt_text(raw: &str, bot_username: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let lowered = trimmed.to_ascii_lowercase();
+    let mention = format!("@{}", bot_username.to_ascii_lowercase());
+    if lowered.starts_with(&mention) {
+        let mut rest = trimmed[mention.len()..].trim_start();
+        while let Some(ch) = rest.chars().next() {
+            if ch == ':' || ch == ',' || ch == '，' {
+                rest = rest[ch.len_utf8()..].trim_start();
+            } else {
+                break;
+            }
+        }
+        if rest.is_empty() {
+            return None;
+        }
+        return Some(rest.to_string());
+    }
+
+    Some(trimmed.to_string())
+}
+
 fn chat_for_session(state: &TelegramState, session_id: &str) -> Option<i64> {
     state
         .chat_bindings
@@ -630,6 +711,19 @@ async fn telegram_send_message(token: &str, chat_id: i64, text: &str) -> Result<
     Ok(())
 }
 
+async fn telegram_get_me(token: &str) -> Result<BotProfile> {
+    let payload = json!({});
+    let user = telegram_api::<TelegramUser>(token, "getMe", &payload).await?;
+    let username = user
+        .username
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("telegram bot username is required"))?;
+    Ok(BotProfile {
+        id: user.id,
+        username,
+    })
+}
+
 async fn telegram_api<T: for<'de> Deserialize<'de>>(
     token: &str,
     method: &str,
@@ -683,6 +777,8 @@ struct TelegramUpdate {
     update_id: i64,
     #[serde(default)]
     message: Option<TelegramMessage>,
+    #[serde(default)]
+    edited_message: Option<TelegramMessage>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -706,6 +802,10 @@ struct TelegramChat {
 #[derive(Debug, Deserialize)]
 struct TelegramUser {
     id: i64,
+    #[serde(default)]
+    is_bot: bool,
+    #[serde(default)]
+    username: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -785,4 +885,5 @@ mod tests {
             Some("Approve".to_string())
         );
     }
+
 }
