@@ -52,6 +52,9 @@ pub async fn handle_inbound(ctx: &Arc<GatewayCtx>, inbound: GatewayInbound) -> a
 
             match session {
                 Some(s) => {
+                    let relay_id = id.clone();
+                    let relay_text = text.clone();
+                    let relay_sender_id = sender_id.clone();
                     send_core_message(
                         &s,
                         &AdapterMessage::UserMessage {
@@ -62,6 +65,12 @@ pub async fn handle_inbound(ctx: &Arc<GatewayCtx>, inbound: GatewayInbound) -> a
                         },
                     )
                     .await?;
+                    let _ = ctx.events_tx.send(GatewayOutbound::UserMessageRelay {
+                        id: relay_id,
+                        session_id,
+                        text: relay_text,
+                        sender_id: relay_sender_id,
+                    });
                 }
                 None => {
                     let _ = ctx.events_tx.send(GatewayOutbound::NoSession {

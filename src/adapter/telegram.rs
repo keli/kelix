@@ -362,6 +362,25 @@ async fn handle_gateway_event(
                 | AdapterOutboundMessage::ApprovalResponseAck { .. } => {}
             }
         }
+        GatewayOutbound::UserMessageRelay {
+            session_id,
+            text,
+            sender_id,
+            ..
+        } => {
+            // Skip Telegram-originated inputs to avoid duplicate echo loops.
+            if sender_id
+                .as_deref()
+                .map(|v| v.starts_with("tg:"))
+                .unwrap_or(false)
+            {
+                return Ok(());
+            }
+            if let Some(chat_id) = chat_for_session(state, &session_id) {
+                let prefix = sender_id.unwrap_or_else(|| "user".to_string());
+                telegram_send_message(token, chat_id, &format!("[{prefix}] {text}")).await?;
+            }
+        }
         GatewayOutbound::NoSession {
             session_id,
             message,
@@ -695,6 +714,14 @@ enum GatewayOutbound {
     CoreEvent {
         session_id: String,
         event: AdapterOutboundMessage,
+    },
+    UserMessageRelay {
+        #[serde(rename = "id")]
+        _id: String,
+        session_id: String,
+        text: String,
+        #[serde(default)]
+        sender_id: Option<String>,
     },
     SessionReady {
         #[serde(rename = "id")]

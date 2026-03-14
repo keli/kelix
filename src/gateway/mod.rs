@@ -115,6 +115,13 @@ pub(crate) enum GatewayOutbound {
         session_id: String,
         event: AdapterOutboundMessage,
     },
+    UserMessageRelay {
+        id: String,
+        session_id: String,
+        text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        sender_id: Option<String>,
+    },
     SessionReady {
         id: String,
         session_id: String,

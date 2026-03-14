@@ -76,6 +76,14 @@ enum GatewayOutbound {
         session_id: String,
         event: AdapterOutboundMessage,
     },
+    UserMessageRelay {
+        #[serde(rename = "id")]
+        _id: String,
+        session_id: String,
+        text: String,
+        #[serde(default)]
+        sender_id: Option<String>,
+    },
     SessionReady {
         #[serde(rename = "id")]
         _id: String,
@@ -592,6 +600,23 @@ pub async fn run(options: TuiOptions) -> anyhow::Result<()> {
                                         .await;
                                     }
                                 }
+                            }
+                            Ok(GatewayOutbound::UserMessageRelay {
+                                session_id,
+                                text,
+                                sender_id,
+                                ..
+                            }) => {
+                                let sender = sender_id.unwrap_or_else(|| "user".to_string());
+                                print_scoped(
+                                    &output_lock,
+                                    &session_id,
+                                    &active_session,
+                                    &format!("[relay:{sender}] {text}"),
+                                    &input_buf,
+                                    cursor_char_pos,
+                                )
+                                .await;
                             }
                             Ok(GatewayOutbound::SessionReady { session_id, status, .. }) => {
                                 print_scoped(
