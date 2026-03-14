@@ -1,6 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
+use crate::adapter::AdapterOptions;
 use crate::gateway::GatewayOptions;
 use crate::tui_client::TuiOptions;
 
@@ -127,6 +128,8 @@ pub enum Commands {
     Gateway(GatewayOptions),
     /// Run an interactive TUI client connected to gateway.
     Tui(TuiOptions),
+    /// Run external chat adapters (Telegram now; more providers later).
+    Adapter(AdapterOptions),
 }
 
 #[derive(Args)]

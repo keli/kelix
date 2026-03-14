@@ -7,6 +7,7 @@ mod start;
 use anyhow::Result;
 use clap::Parser;
 
+use crate::adapter;
 use crate::gateway;
 use crate::tui_client;
 
@@ -118,5 +119,6 @@ pub async fn run() -> Result<()> {
         Commands::Core(core) => run_core(core).await,
         Commands::Gateway(options) => gateway::run(options).await,
         Commands::Tui(options) => tui_client::run(options).await,
+        Commands::Adapter(options) => adapter::run(options).await,
     }
 }

@@ -1,3 +1,4 @@
+mod adapter;
 mod commands;
 mod config;
 mod error;
