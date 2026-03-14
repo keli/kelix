@@ -288,6 +288,9 @@ async fn handle_telegram_update(
         .as_ref()
         .map(|u| format!("tg:{}", u.id))
         .unwrap_or_else(|| "tg:unknown".to_string());
+    // Keep Telegram behavior close to TUI: opportunistically resume before
+    // each message so suspended sessions can receive input immediately.
+    send_gateway_session_resume(ws_tx, &session_id)?;
     send_gateway_user_message(ws_tx, &session_id, &sender_id, text)?;
     Ok(())
 }
