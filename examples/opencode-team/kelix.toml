@@ -1,0 +1,46 @@
+# kelix.toml — opencode team profile
+#
+# Uses podman to run the agent containers built from docker/Dockerfile.agent-runner.
+# Both orchestrator and workers use OpenCode as the LLM backend.
+#
+# Usage:
+#   kelix start examples/opencode-team/kelix.toml --prompt "your task"
+#
+# Prerequisites:
+#   - podman installed and daemon running
+#   - kelix:latest image built: ./docker/build.sh
+#   - provider credentials exported in host shell (for example OPENAI_API_KEY)
+#   - model defaults configured in examples/opencode-team/opencode.json
+#   - /prompts is bundled in the image; optionally mount /prompts to override defaults.
+
+[agent]
+max_spawns            = 0   # unlimited
+max_concurrent_spawns = 2
+max_wall_time_secs    = 0   # no wall-clock limit
+
+[subagents.orchestrator]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-orchestrator --agent opencode --system-prompt-file /prompts/orchestrator.md"
+lifecycle = "session"
+
+[subagents.coding-agent]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/coding-agent.md --system-prompt-file /prompts/coding-guardrails.md"
+lifecycle = "task"
+
+[subagents.review-agent]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/review-agent.md"
+lifecycle = "task"
+
+[tools.shell]
+enabled          = true
+timeout_secs     = 600
+max_output_bytes = 131072
+allowed_commands = ["podman", "git", "cargo", "npm", "python3", "bash", "sh", "ls", "cat", "rg", "jq"]
+
+[budget]
+max_tokens         = 0
+on_budget_exceeded = "abort"
+
+[approval]
+shell_gate = "human"
+plan_gate  = "human"
+merge_gate = "human"

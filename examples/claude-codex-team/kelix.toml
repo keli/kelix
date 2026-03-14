@@ -1,0 +1,48 @@
+# kelix.toml — local development config
+#
+# Uses podman to run the agent containers built from docker/Dockerfile.agent-runner.
+# Mount your project workspace and credentials via volumes.
+#
+# Usage:
+#   kelix start kelix.toml --prompt "your task"
+#
+# Build images first:
+#   ./docker/build.sh
+#
+# Auth options: see examples/claude-onboarding/README.md for full instructions.
+# /prompts is bundled in the image; optionally mount /prompts to override defaults.
+#
+# Note: orchestrator runs with /workspace mounted read-only and only
+# /workspace/.kelix writable, so code edits must go through task workers.
+
+[agent]
+max_spawns            = 0   # unlimited
+max_concurrent_spawns = 2   # keep low for local dev
+max_wall_time_secs    = 0   # no wall-clock limit
+
+[subagents.orchestrator]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
+lifecycle = "session"
+
+[subagents.coding-agent]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-worker --agent codex --system-prompt-file /prompts/coding-agent.md --system-prompt-file /prompts/coding-guardrails.md"
+lifecycle = "task"
+
+[subagents.review-agent]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/review-agent.md"
+lifecycle = "task"
+
+[tools.shell]
+enabled          = true
+timeout_secs     = 600
+max_output_bytes = 131072
+allowed_commands = ["podman", "git", "cargo", "npm", "python3", "bash", "sh", "ls", "cat", "rg", "jq"]
+
+[budget]
+max_tokens        = 0
+on_budget_exceeded = "abort"
+
+[approval]
+shell_gate = "human"
+plan_gate  = "human"
+merge_gate = "human"

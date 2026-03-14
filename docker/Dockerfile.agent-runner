@@ -1,0 +1,89 @@
+FROM rust:slim AS agent-bin-builder
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY src ./src
+RUN cargo build --release --bin weave --bin kelix-worker --bin kelix-orchestrator
+
+FROM debian:trixie-slim AS agent-runner-base
+
+# Install runtime dependencies shared by all agent containers.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    git \
+    tar \
+    ripgrep \
+    jq \
+    less \
+    fd-find \
+    procps \
+    file \
+    tree \
+    && rm -rf /var/lib/apt/lists/*
+
+# Debian names the binary `fdfind`; expose `fd` for tool compatibility.
+RUN ln -sf /usr/bin/fdfind /usr/local/bin/fd
+
+# Install Node.js 20 for the claude-code CLI.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Claude Code and OpenCode CLIs globally via npm.
+# npm installation is officially deprecated for end-users but works correctly
+# in container builds where shell integration is not needed.
+RUN npm install -g @anthropic-ai/claude-code opencode-ai
+
+# Install codex static musl binary from GitHub Releases.
+# The binary is statically linked (musl) and has no runtime dependencies.
+# Architecture is detected at build time.
+ARG TARGETARCH
+RUN set -e; \
+    case "${TARGETARCH}" in \
+        amd64) ARCH="x86_64-unknown-linux-musl" ;; \
+        arm64) ARCH="aarch64-unknown-linux-musl" ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac; \
+    RELEASE_URL="https://github.com/openai/codex/releases/latest/download/codex-${ARCH}.tar.gz"; \
+    curl -fsSL "${RELEASE_URL}" | tar -xz -C /usr/local/bin; \
+    mv /usr/local/bin/codex-${ARCH} /usr/local/bin/codex 2>/dev/null || true; \
+    chmod +x /usr/local/bin/codex
+
+# Bundle default prompts so containers work without runtime prompt mounts.
+# A runtime bind mount to /prompts intentionally overrides these defaults.
+COPY prompts /prompts
+
+# Bundle the local weave binary so subagents can extract chunk docs without
+# depending on host tooling.
+COPY --from=agent-bin-builder /build/target/release/weave /usr/local/bin/weave
+COPY --from=agent-bin-builder /build/target/release/kelix-orchestrator /usr/local/bin/kelix-orchestrator
+COPY --from=agent-bin-builder /build/target/release/kelix-worker /usr/local/bin/kelix-worker
+RUN chmod +x /usr/local/bin/weave \
+    /usr/local/bin/kelix-orchestrator \
+    /usr/local/bin/kelix-worker
+
+COPY docker/entrypoint.sh /usr/local/bin/agent-entrypoint.sh
+RUN chmod +x /usr/local/bin/agent-entrypoint.sh
+
+# Non-root user for safety
+RUN useradd -m -u 1000 agent
+USER agent
+WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/agent-entrypoint.sh"]
+
+FROM agent-runner-base AS agent-runner
+
+# Unified runtime image with all local binaries plus Claude, Codex, and OpenCode.
+
+FROM agent-runner-base AS worker-codex
+
+CMD ["kelix-worker", "--agent", "codex", "--system-prompt-file", "/prompts/coding-agent.md"]
+
+FROM agent-runner-base AS worker-claude
+
+CMD ["kelix-worker", "--agent", "claude", "--system-prompt-file", "/prompts/coding-agent.md"]
+
+FROM agent-runner-base AS orchestrator
+
+CMD ["kelix-orchestrator", "--system-prompt-file", "/prompts/orchestrator.md"]

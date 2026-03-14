@@ -1,0 +1,30 @@
+# kelix.toml — codex onboarding profile
+#
+# Purpose:
+#   Seed template for generating a new project config.
+#   Use with an existing local agent, or run directly as a containerized example.
+# /prompts is bundled in the image; optionally mount /prompts to override defaults.
+
+[agent]
+max_spawns            = 0
+max_concurrent_spawns = 1
+max_wall_time_secs    = 0
+
+[subagents.orchestrator]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-orchestrator --agent codex --system-prompt-file /prompts/onboarding-orchestrator.md"
+lifecycle = "session"
+
+[tools.shell]
+enabled          = true
+timeout_secs     = 600
+max_output_bytes = 131072
+allowed_commands = ["podman"]
+
+[budget]
+max_tokens         = 0
+on_budget_exceeded = "abort"
+
+[approval]
+shell_gate = "human"
+plan_gate  = "human"
+merge_gate = "human"

@@ -1,0 +1,35 @@
+# kelix.toml — claude onboarding profile
+#
+# Prerequisite:
+#   Configure authentication with either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY.
+# /prompts is bundled in the image; optionally mount /prompts to override defaults.
+
+[agent]
+max_spawns            = 0
+max_concurrent_spawns = 1
+max_wall_time_secs    = 0
+
+# Claude orchestrator (Option A — OAuth token)
+[subagents.orchestrator]
+command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/onboarding-orchestrator.md"
+lifecycle = "session"
+
+# Claude orchestrator (Option B — API key)
+# [subagents.orchestrator]
+# command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/onboarding-orchestrator.md"
+# lifecycle = "session"
+
+[tools.shell]
+enabled          = true
+timeout_secs     = 600
+max_output_bytes = 131072
+allowed_commands = ["podman"]
+
+[budget]
+max_tokens         = 0
+on_budget_exceeded = "abort"
+
+[approval]
+shell_gate = "human"
+plan_gate  = "human"
+merge_gate = "human"

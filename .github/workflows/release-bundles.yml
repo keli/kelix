@@ -1,0 +1,139 @@
+name: Release Bundles
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-14
+            target: aarch64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and target
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release binaries
+        run: cargo build --release --target "${{ matrix.target }}" --bin kelix --bin kelix-orchestrator --bin kelix-worker --bin weave
+
+      - name: Derive version label
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "value=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package release bundle
+        shell: bash
+        run: |
+          bash scripts/package-release.sh \
+            --target "${{ matrix.target }}" \
+            --version "${{ steps.version.outputs.value }}" \
+            --output-dir dist
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kelix-${{ steps.version.outputs.value }}-${{ matrix.target }}
+          path: dist/*.tar.gz
+
+      - name: Upload release asset
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap Formula
+    if: github.ref_type == 'tag' && secrets.HOMEBREW_TAP_TOKEN != ''
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      TAP_REPO: keli/homebrew-kelix
+
+    steps:
+      - name: Download macOS arm64 release bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern "kelix-${TAG}-aarch64-apple-darwin.tar.gz" \
+            --dir dist
+
+      - name: Compute macOS arm64 SHA256
+        id: arm
+        run: |
+          sha="$(sha256sum "dist/kelix-${TAG}-aarch64-apple-darwin.tar.gz" | awk '{print $1}')"
+          echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: Check out Homebrew tap repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+          persist-credentials: false
+
+      - name: Update Formula/kelix.rb
+        env:
+          ARM_SHA256: ${{ steps.arm.outputs.sha256 }}
+        run: |
+          ruby - <<'RUBY'
+          formula = "tap/Formula/kelix.rb"
+          tag = ENV.fetch("TAG")
+          arm_sha = ENV.fetch("ARM_SHA256")
+
+          content = File.read(formula)
+
+          unless content.sub!(/^(\s*version\s+")[^"]+(")$/, "\\1#{tag}\\2")
+            abort("failed to update version in #{formula}")
+          end
+
+          arm_pattern = /(aarch64-apple-darwin\.tar\.gz"\n\s*sha256\s+")[^"]+(")/
+          unless content.sub!(arm_pattern, "\\1#{arm_sha}\\2")
+            abort("failed to update arm64 sha256 in #{formula}")
+          end
+
+          File.write(formula, content)
+          RUBY
+
+      - name: Create pull request in tap repo
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+          commit-message: "kelix ${{ env.TAG }}"
+          branch: "automation/kelix-${{ env.TAG }}"
+          title: "kelix ${{ env.TAG }}"
+          body: |
+            Automated update from `${{ github.repository }}` release `${{ env.TAG }}`.
+            - Updated `Formula/kelix.rb` version
+            - Updated macOS arm64 tarball SHA256
+          add-paths: |
+            Formula/kelix.rb
