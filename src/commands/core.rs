@@ -103,7 +103,6 @@ pub async fn run_core(core: CoreCli) -> Result<()> {
                 )
                 .await
                 {
-                    Ok(LoopExit::Complete) => break,
                     Ok(LoopExit::Suspended { reason }) => {
                         eprintln!("Session {} suspended: {}.", id, reason);
                         break;
@@ -183,9 +182,6 @@ pub async fn run_core(core: CoreCli) -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("session '{}' not found", id))?
                 .clone();
 
-            if entry.state == SessionState::Complete {
-                anyhow::bail!("session '{}' is already complete", id);
-            }
 
             // @chunk main/resume-crash-guard
             // Refuse auto-resume after 3 consecutive crashes unless --force is given.
@@ -252,7 +248,6 @@ pub async fn run_core(core: CoreCli) -> Result<()> {
                 )
                 .await
                 {
-                    Ok(LoopExit::Complete) => break,
                     Ok(LoopExit::Suspended { reason }) => {
                         eprintln!("Session {} suspended: {}.", id, reason);
                         break;

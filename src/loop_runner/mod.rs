@@ -38,12 +38,11 @@ fn new_id(prefix: &str) -> String {
 // @chunk loop-runner/loop-exit
 // Describes how the orchestrator process terminated.
 // Returned from `run` so that `main.rs` can decide whether to
-// auto-restart (Handover), mark complete, or mark suspended.
+// auto-restart (Handover) or mark suspended.
 #[derive(Debug)]
 pub enum LoopExit {
-    /// Orchestrator sent `complete`.
-    Complete,
-    /// Session suspended cleanly (e.g. wall-clock limit exceeded, adapter session end).
+    /// Session suspended cleanly (orchestrator sent `complete`, wall-clock limit exceeded,
+    /// adapter session end, etc.).
     Suspended { reason: &'static str },
     /// Orchestrator exited with exit code 3 (planned handover).
     /// The payload is the last JSON line written by the orchestrator before closing stdout.
@@ -379,8 +378,10 @@ pub async fn run(
         }
     }
 
-    // Clean exit after `complete`.
-    session.mark_complete();
+    // Suspend after `complete` so the session is resumable on the next user message.
+    // The session log records the full history; `complete` is a protocol-level signal
+    // that the current task finished, not that the conversation is over.
+    session.mark_suspended();
     session.reset_crash_counter();
     persist_session_state(session).await;
 
@@ -392,7 +393,7 @@ pub async fn run(
     // Wait for orchestrator to exit.
     graceful_kill(&mut child).await;
     // @end-chunk
-    Ok(LoopExit::Complete)
+    Ok(LoopExit::Suspended { reason: "task complete" })
 }
 
 // Wait up to 5 s for the child to exit on its own, then kill it.
@@ -412,7 +413,6 @@ mod tests {
     #[test]
     fn test_loop_exit_variants() {
         // Verify the enum variants are constructible (compile-time check).
-        let _complete = LoopExit::Complete;
         let _suspended = LoopExit::Suspended { reason: "test" };
         let _handover = LoopExit::Handover { payload: None };
         let _handover_with = LoopExit::Handover {

@@ -133,7 +133,7 @@ If the key does not exist in config, `value` is `null`. kelix does not return an
 
 ### 4.4 `complete`
 
-Signal that the session is done. kelix displays the summary to the user and exits cleanly.
+Signal that the current task is complete. kelix displays the summary to the user and suspends the session. The session remains resumable: if the user sends a follow-up message, core resumes with `recovery: true` and the orchestrator reconstructs context from session state.
 
 ```json
 {
@@ -143,7 +143,7 @@ Signal that the session is done. kelix displays the summary to the user and exit
 }
 ```
 
-No response is sent; kelix terminates after receiving this message.
+No response is sent; kelix suspends the session and the core process exits after receiving this message.
 
 ### 4.5 `blocked`
 
@@ -295,7 +295,7 @@ kelix [--headless] start / kelix [--headless] resume <id>
     │   (approve / config_get / blocked / cancel_spawn — synchronous)
     │
     ├── orchestrator sends { "type": "complete" }
-    │   → session marked complete; core exits
+    │   → session marked suspended; core exits (resumable on next user message)
     │
     ├── kelix sends { "type": "session_abort" }
     │   → session marked suspended; orchestrator should clean up and exit

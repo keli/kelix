@@ -37,7 +37,4 @@ pub enum CoreError {
 
     #[error("session not found: {0}")]
     SessionNotFound(String),
-
-    #[error("session already complete: {0}")]
-    SessionAlreadyComplete(String),
 }

@@ -449,6 +449,9 @@ pub async fn run(options: TuiOptions) -> anyhow::Result<()> {
                         }
 
                         ws_sink
+                            .send(Message::Text(session_resume_msg(&active_session, false)))
+                            .await?;
+                        ws_sink
                             .send(Message::Text(user_message_msg(
                                 &active_session,
                                 &sender_id,

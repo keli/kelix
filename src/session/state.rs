@@ -10,7 +10,6 @@ pub type SessionId = String;
 pub enum SessionState {
     Active,
     Suspended,
-    Complete,
 }
 
 impl std::fmt::Display for SessionState {
@@ -18,7 +17,6 @@ impl std::fmt::Display for SessionState {
         match self {
             Self::Active => write!(f, "active"),
             Self::Suspended => write!(f, "suspended"),
-            Self::Complete => write!(f, "complete"),
         }
     }
 }
@@ -82,11 +80,6 @@ impl Session {
 
     pub fn mark_suspended(&mut self) {
         self.state = SessionState::Suspended;
-        self.last_active = Utc::now();
-    }
-
-    pub fn mark_complete(&mut self) {
-        self.state = SessionState::Complete;
         self.last_active = Utc::now();
     }
 

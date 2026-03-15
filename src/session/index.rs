@@ -92,7 +92,7 @@ impl SessionIndex {
 
     // @chunk session-index/purge
     // Remove sessions that have been inactive for longer than `max_age_days`.
-    // Active sessions are never purged; only suspended and complete ones are eligible.
+    // Active sessions are never purged; only suspended ones are eligible.
     // Returns the number of entries removed.
     pub fn purge_old(&mut self, max_age_days: u64) -> usize {
         let cutoff = Utc::now() - chrono::Duration::days(max_age_days as i64);
@@ -134,14 +134,14 @@ mod tests {
 
         // Update state
         let updated = SessionEntry {
-            state: SessionState::Complete,
+            state: SessionState::Suspended,
             ..entry
         };
         index.upsert(updated);
         assert_eq!(index.sessions.len(), 1);
         assert_eq!(
             index.get("sess-test-001").unwrap().state,
-            SessionState::Complete
+            SessionState::Suspended
         );
     }
 
