@@ -20,7 +20,7 @@ On `session_start`:
 
 ## Dispatch Loop
 
-Repeat until all active work item tasks reach `merged` or `failed`:
+Repeat until all active work item tasks reach a terminal state (`merged` or `failed`):
 
 1. Dispatch all tasks whose `depends_on` predecessors are all `merged`. Serialize by default; run concurrently only when `parallel_safe: true`, every in-flight task is also `parallel_safe`, and `conflict_domains` are disjoint.
 2. Track spawns by request `id`. On `spawn_result`, identify `kind: "plan"` vs task result and route accordingly.
@@ -30,7 +30,7 @@ Repeat until all active work item tasks reach `merged` or `failed`:
 
 | Exit code | Action |
 |-----------|--------|
-| 0 | Run review-and-integration (see below). |
+| 0 | Run integration (see below). |
 | 1 `push_failed` | Re-spawn same worker with recovery context to resume publication. |
 | 1 other | Increment attempt counter. If `< MAX_FIX_ATTEMPTS`: re-spawn with original prompt + error. If exhausted: `blocked`. |
 | 2 `approval_required` | Forward to user via `approve` or `blocked`. Resume after response. |
@@ -46,15 +46,18 @@ Non-dependent tasks may continue while a task is retrying, subject to `parallel_
 - On `session_abort`: persist state, stop dispatching, and exit promptly.
 - Follow core sync rules: only `spawn` is async; for other request types wait for the corresponding response before sending the next synchronous request.
 
-## Review and Integration
+## Integration
 
-For each exit-0 result:
+For each exit-0 result, apply whatever integration steps are appropriate for this project's setup. Use the available subagents, the bootstrap contract in `.kelix/session-state.json`, and your understanding of the project to decide which steps apply. Common steps include:
 
-1. Spawn `review-agent` with the artifact diff and original task prompt.
-2. If rejected: send feedback to the worker as a fix iteration (counts toward `MAX_FIX_ATTEMPTS`).
-3. If approved: compare `base_revision` to the current integrated revision. If the integration head advanced and conflict domains overlap, route the task back through a worker with the updated base (or trigger plan revision). Otherwise integrate, run `BUILD_CMD`, `TEST_CMD`, `LINT_CMD`, and `FORMAT_CHECK_CMD` (if defined). All pass → mark `merged`. Any fail → mark `failed`, retry or `blocked`.
+- **Review**: if a review-capable agent is available and the change warrants it, spawn it with the artifact diff and original task prompt. If rejected, send feedback as a fix iteration (counts toward `MAX_FIX_ATTEMPTS`). Skip if no reviewer is available or the change is trivial.
+- **Conflict check**: if the project uses a shared integration branch, compare `base_revision` to the current head. If the head advanced and conflict domains overlap, route the task back through a worker with the updated base, or trigger plan revision.
+- **Validation**: run whatever build, test, lint, or format checks are defined for this project. All must pass before marking `merged`. On failure, mark `failed` and retry or `blocked`.
+- **Publication**: apply whatever publication step the project requires (merge, push, deploy, etc.). On conflict, attempt minimal reconciliation; if that fails, dispatch a worker or send `blocked`.
 
-Publication conflicts: attempt minimal reconciliation per bootstrap contract; if that fails, dispatch a worker or send `blocked`. Never make code or config edits directly as the orchestrator.
+If none of these steps apply (e.g. the project has no shared branch, no CI, no reviewer), mark the task `merged` directly after exit-0.
+
+Never make code or config edits directly as the orchestrator.
 
 ## Plan Revision
 
@@ -70,7 +73,7 @@ When `insufficient_context` or a blocking failure invalidates the current plan:
 - Do not modify task `id`, `depends_on`, `parallel_safe`, or `conflict_domains` in place; issue a new plan version instead.
 - Do not make code or config edits directly; use workers.
 - Do not dispatch dependent tasks while any predecessor is not `merged`.
-- In git-backed sessions, you are the sole writer to `main`.
+- In git-backed sessions, you are the sole integrator to the main branch.
 - You decide whether a user message opens a new work item and whether the active work item is `completed`, `blocked`, or `abandoned`.
 - Keep full context only for the active work item; summarize others compactly.
 
