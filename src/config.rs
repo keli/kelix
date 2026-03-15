@@ -10,6 +10,8 @@ pub struct Config {
     #[serde(default)]
     pub subagents: HashMap<String, SubagentConfig>,
     #[serde(default)]
+    pub adapter: AdapterConfig,
+    #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
     pub budget: BudgetConfig,
@@ -18,6 +20,31 @@ pub struct Config {
     #[serde(default)]
     pub approval: ApprovalConfig,
 }
+
+// @chunk config/adapter-runtime
+// Adapter config is project-level runtime metadata. It is intentionally kept
+// outside [subagents] because adapter lifecycle is independent from
+// session/task worker orchestration.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct AdapterConfig {
+    /// Whether `kelix start` should auto-launch the adapter command.
+    #[serde(default)]
+    pub autostart: bool,
+    /// Selected provider key under [adapter.providers.<name>].
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// Provider registry. Builtin and external providers share one control plane.
+    #[serde(default)]
+    pub providers: HashMap<String, AdapterProviderConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum AdapterProviderConfig {
+    Builtin,
+    External { start_command: String },
+}
+// @end-chunk
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
@@ -203,6 +230,23 @@ fn validate(config: &Config) -> Result<(), CoreError> {
             )));
         }
     }
+    if config.adapter.autostart {
+        let selected = config
+            .adapter
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| {
+                CoreError::Config("adapter.autostart=true requires adapter.provider".to_string())
+            })?;
+        if !config.adapter.providers.contains_key(selected) {
+            return Err(CoreError::Config(format!(
+                "adapter.provider '{}' is not defined under [adapter.providers]",
+                selected
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -278,5 +322,46 @@ max_reflection_rounds = 5
         let config = load(f.path()).unwrap();
         assert_eq!(config.plan.plan_reviewers, vec!["review-agent"]);
         assert_eq!(config.plan.max_reflection_rounds, 5);
+    }
+
+    #[test]
+    fn test_load_adapter_section() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[adapter]
+autostart = true
+provider = "telegram"
+
+[adapter.providers.telegram]
+kind = "builtin"
+"#
+        )
+        .unwrap();
+
+        let config = load(f.path()).unwrap();
+        assert_eq!(config.adapter.provider.as_deref(), Some("telegram"));
+        assert!(matches!(
+            config.adapter.providers.get("telegram"),
+            Some(AdapterProviderConfig::Builtin)
+        ));
+        assert!(config.adapter.autostart);
+    }
+
+    #[test]
+    fn test_adapter_autostart_requires_provider_registration() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[adapter]
+autostart = true
+provider = "telegram"
+"#
+        )
+        .unwrap();
+
+        assert!(load(f.path()).is_err());
     }
 }

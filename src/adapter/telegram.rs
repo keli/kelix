@@ -8,12 +8,21 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::process::Command;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 use uuid::Uuid;
 
 use crate::protocol::adapter_msg::AdapterOutboundMessage;
+
+macro_rules! logln {
+    ($($arg:tt)*) => {{
+        use std::io::Write as _;
+        let mut stderr = std::io::stderr();
+        let _ = write!(stderr, "\r");
+        let _ = writeln!(stderr, $($arg)*);
+    }};
+}
 
 // @chunk telegram-adapter/options
 // Telegram provider options are grouped under the unified `kelix adapter`
@@ -86,26 +95,27 @@ struct BotProfile {
 }
 
 // @chunk telegram-adapter/runtime
-pub async fn run(options: TelegramOptions, reset: bool) -> Result<()> {
+pub async fn run(options: TelegramOptions, reset: bool, ready_file: Option<PathBuf>) -> Result<()> {
     let state_path = resolve_state_path(options.state_path)?;
 
     if reset {
         save_state(&state_path, &TelegramState::default()).await?;
-        eprintln!("kelix-adapter: state reset: {}", state_path.display());
+        logln!("kelix-adapter: state reset: {}", state_path.display());
         return Ok(());
     }
 
     let (token, token_source) = resolve_bot_token(options.bot_token)?;
-    eprintln!("kelix-adapter: provider=telegram");
-    eprintln!("kelix-adapter: gateway={}", options.gateway_url);
-    eprintln!("kelix-adapter: core_bin={}", options.core_bin);
-    eprintln!("kelix-adapter: state_path={}", state_path.display());
-    eprintln!("kelix-adapter: token_source={token_source}");
+    logln!("kelix-adapter: provider=telegram");
+    logln!("kelix-adapter: gateway={}", options.gateway_url);
+    logln!("kelix-adapter: core_bin={}", options.core_bin);
+    logln!("kelix-adapter: state_path={}", state_path.display());
+    logln!("kelix-adapter: token_source={token_source}");
 
     let bot_profile = telegram_get_me(&token).await?;
-    eprintln!(
+    logln!(
         "kelix-adapter: telegram_bot=@{} id={}",
-        bot_profile.username, bot_profile.id
+        bot_profile.username,
+        bot_profile.id
     );
 
     let mut state = load_state(&state_path).await?;
@@ -116,8 +126,8 @@ pub async fn run(options: TelegramOptions, reset: bool) -> Result<()> {
     // lifetime and is never written to disk.
     let claim_code: Option<String> = if state.whitelist.is_empty() {
         let code = generate_claim_code();
-        eprintln!("kelix-adapter: whitelist is empty");
-        eprintln!("kelix-adapter: send '/claim {code}' to the bot to claim admin access");
+        logln!("kelix-adapter: whitelist is empty");
+        logln!("kelix-adapter: send '/claim {code}' to the bot to claim admin access");
         Some(code)
     } else {
         None
@@ -163,9 +173,14 @@ pub async fn run(options: TelegramOptions, reset: bool) -> Result<()> {
     tokio::spawn(async move {
         if let Err(err) = poll_telegram_loop(token_for_poll, poll_timeout, telegram_events_tx).await
         {
-            eprintln!("telegram-adapter: polling stopped: {err}");
+            logln!("telegram-adapter: polling stopped: {err}");
         }
     });
+
+    if let Some(path) = ready_file.as_deref() {
+        write_ready_file(path)?;
+        logln!("kelix-adapter: ready");
+    }
 
     while let Some(event) = event_rx.recv().await {
         match event {
@@ -192,6 +207,16 @@ pub async fn run(options: TelegramOptions, reset: bool) -> Result<()> {
     Ok(())
 }
 // @end-chunk
+
+fn write_ready_file(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    std::fs::write(path, b"ready\n")
+        .with_context(|| format!("failed to write ready file {}", path.display()))?;
+    Ok(())
+}
 
 // @chunk telegram-adapter/event-handlers
 async fn handle_telegram_update(
@@ -512,18 +537,18 @@ async fn handle_gateway_event(
             message, detail, ..
         } => {
             if let Some(extra) = detail {
-                eprintln!("telegram-adapter: gateway error: {message} ({extra})");
+                logln!("telegram-adapter: gateway error: {message} ({extra})");
             } else {
-                eprintln!("telegram-adapter: gateway error: {message}");
+                logln!("telegram-adapter: gateway error: {message}");
             }
         }
         GatewayOutbound::GatewayInfo {
             message, detail, ..
         } => {
             if let Some(extra) = detail {
-                eprintln!("telegram-adapter: gateway info: {message} ({extra})");
+                logln!("telegram-adapter: gateway info: {message} ({extra})");
             } else {
-                eprintln!("telegram-adapter: gateway info: {message}");
+                logln!("telegram-adapter: gateway info: {message}");
             }
         }
         GatewayOutbound::SessionReady { .. } => {}
@@ -556,7 +581,7 @@ async fn poll_telegram_loop(
                 }
             }
             Err(err) => {
-                eprintln!("telegram-adapter: getUpdates failed: {err}");
+                logln!("telegram-adapter: getUpdates failed: {err}");
                 sleep(Duration::from_secs(2)).await;
             }
         }
@@ -723,7 +748,7 @@ async fn handle_claim(
         Some(code) if submitted == code => {
             state.whitelist.insert(uid);
             save_state(state_path, state).await?;
-            eprintln!("kelix-adapter: whitelist claimed by user_id={uid}");
+            logln!("kelix-adapter: whitelist claimed by user_id={uid}");
             telegram_send_message(token, chat_id, "you have been added to the whitelist").await?;
         }
         Some(_) => {

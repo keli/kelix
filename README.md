@@ -164,7 +164,7 @@ Target workflow directions (see `examples/` for current templates and design ske
 
 - Software project execution with planner/coder/reviewer loops.
 - Infra and DevOps change management with explicit risk gates.
-- Chat-assistant style orchestration through adapters, including OpenClaw-like usage patterns.
+- Chat-assistant style orchestration through adapters (currently Telegram in-tree).
 - Optional full automation loops via custom `approval-agent` policies when human gates are not required.
 - Domain-specific workflows (ML training, trading pipeline, onboarding automation).
 

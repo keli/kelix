@@ -17,6 +17,13 @@ max_spawns            = 100
 max_concurrent_spawns = 4
 max_wall_time_secs    = 0
 
+[adapter]
+autostart = true
+provider = "telegram"
+
+[adapter.providers.telegram]
+kind = "builtin"
+
 # Claude orchestrator (Option A — OAuth token)
 [subagents.orchestrator]
 start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
