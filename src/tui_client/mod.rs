@@ -238,6 +238,16 @@ pub async fn run(options: TuiOptions) -> anyhow::Result<()> {
                     .await;
                     break 'main;
                 }
+                if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    cursor_char_pos = 0;
+                    redraw_prompt(&output_lock, &input_buf, cursor_char_pos).await;
+                    continue;
+                }
+                if key.code == KeyCode::Char('e') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    cursor_char_pos = input_buf.chars().count();
+                    redraw_prompt(&output_lock, &input_buf, cursor_char_pos).await;
+                    continue;
+                }
 
                 match key.code {
                     KeyCode::Enter => {
