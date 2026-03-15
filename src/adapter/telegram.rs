@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -56,10 +56,18 @@ struct PendingApproval {
     options: Vec<String>,
 }
 
+// @chunk telegram-adapter/whitelist
+// Whitelist is seeded by /claim on first run. Until at least one user has
+// claimed, the adapter prints a one-time passcode at startup. Only whitelisted
+// users can drive sessions; the /claim command itself is always accepted.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct TelegramState {
     chat_bindings: HashMap<i64, String>,
+    /// Telegram user IDs that are allowed to send session messages.
+    #[serde(default)]
+    whitelist: HashSet<i64>,
 }
+// @end-chunk
 
 #[derive(Debug, Deserialize)]
 struct SessionList {
@@ -78,8 +86,15 @@ struct BotProfile {
 }
 
 // @chunk telegram-adapter/runtime
-pub async fn run(options: TelegramOptions) -> Result<()> {
+pub async fn run(options: TelegramOptions, reset: bool) -> Result<()> {
     let state_path = resolve_state_path(options.state_path)?;
+
+    if reset {
+        save_state(&state_path, &TelegramState::default()).await?;
+        eprintln!("kelix-adapter: state reset: {}", state_path.display());
+        return Ok(());
+    }
+
     let (token, token_source) = resolve_bot_token(options.bot_token)?;
     eprintln!("kelix-adapter: provider=telegram");
     eprintln!("kelix-adapter: gateway={}", options.gateway_url);
@@ -95,6 +110,18 @@ pub async fn run(options: TelegramOptions) -> Result<()> {
 
     let mut state = load_state(&state_path).await?;
     let mut pending_approvals: HashMap<String, PendingApproval> = HashMap::new();
+
+    // Generate a one-time claim code if no user has been whitelisted yet.
+    // The code is intentionally ephemeral: it lives only for this process
+    // lifetime and is never written to disk.
+    let claim_code: Option<String> = if state.whitelist.is_empty() {
+        let code = generate_claim_code();
+        eprintln!("kelix-adapter: whitelist is empty");
+        eprintln!("kelix-adapter: send '/claim {code}' to the bot to claim admin access");
+        Some(code)
+    } else {
+        None
+    };
 
     let (ws_stream, _) = connect_async(&options.gateway_url)
         .await
@@ -151,6 +178,7 @@ pub async fn run(options: TelegramOptions) -> Result<()> {
                     &state_path,
                     &mut state,
                     &mut pending_approvals,
+                    claim_code.as_deref(),
                     update,
                 )
                 .await?;
@@ -174,14 +202,13 @@ async fn handle_telegram_update(
     state_path: &Path,
     state: &mut TelegramState,
     pending_approvals: &mut HashMap<String, PendingApproval>,
+    claim_code: Option<&str>,
     update: TelegramUpdate,
 ) -> Result<()> {
     let Some(message) = update.message.or(update.edited_message) else {
         return Ok(());
     };
-    if message.chat.kind != "group" && message.chat.kind != "supergroup" {
-        return Ok(());
-    }
+    // Ignore messages from bots (including self).
     if message.from.as_ref().map(|u| u.is_bot).unwrap_or(false) {
         return Ok(());
     }
@@ -198,6 +225,36 @@ async fn handle_telegram_update(
         return Ok(());
     };
     let chat_id = message.chat.id;
+    let user_id = message.from.as_ref().map(|u| u.id);
+
+    // Handle /claim before the group-only and whitelist checks so it works
+    // in both private chats and groups, regardless of whitelist status.
+    if let Some((cmd, args)) = parse_command(raw_text) {
+        if cmd == "claim" {
+            return handle_claim(token, state, state_path, chat_id, user_id, claim_code, args)
+                .await;
+        }
+    }
+
+    // Session-driving messages are group/supergroup only.
+    if message.chat.kind != "group" && message.chat.kind != "supergroup" {
+        return Ok(());
+    }
+
+    // Enforce whitelist. If no users are whitelisted the bot is unclaimed and
+    // all session messages are silently dropped until someone claims it.
+    if let Some(uid) = user_id {
+        if !state.whitelist.is_empty() && !state.whitelist.contains(&uid) {
+            return Ok(());
+        }
+    } else {
+        // No sender identity — drop.
+        return Ok(());
+    }
+
+    let sender_id = user_id
+        .map(|uid| format!("tg:{uid}"))
+        .unwrap_or_else(|| "tg:unknown".to_string());
 
     if let Some((cmd, args)) = parse_command(raw_text) {
         match cmd.as_str() {
@@ -284,11 +341,6 @@ async fn handle_telegram_update(
                     message.chat.title.as_deref(),
                 )
                 .await?;
-                let sender_id = message
-                    .from
-                    .as_ref()
-                    .map(|u| format!("tg:{}", u.id))
-                    .unwrap_or_else(|| "tg:unknown".to_string());
                 send_gateway_session_resume(ws_tx, &session_id)?;
                 send_gateway_user_message(ws_tx, &session_id, &sender_id, &prompt_text)?;
                 return Ok(());
@@ -297,7 +349,7 @@ async fn handle_telegram_update(
                 telegram_send_message(
                     token,
                     chat_id,
-                    "commands: /ask <text>, /run <text>, /status, /rebind, /approve <request_id> <choice|index>",
+                    "commands: /ask <text>, /run <text>, /status, /rebind, /approve <request_id> <choice|index>, /claim <code>",
                 )
                 .await?;
                 return Ok(());
@@ -319,11 +371,6 @@ async fn handle_telegram_update(
         message.chat.title.as_deref(),
     )
     .await?;
-    let sender_id = message
-        .from
-        .as_ref()
-        .map(|u| format!("tg:{}", u.id))
-        .unwrap_or_else(|| "tg:unknown".to_string());
 
     // Keep Telegram behavior close to TUI: opportunistically resume before
     // each message so suspended sessions can receive input immediately.
@@ -639,6 +686,54 @@ fn chat_for_session(state: &TelegramState, session_id: &str) -> Option<i64> {
         .find_map(|(chat_id, bound)| (bound == session_id).then_some(*chat_id))
 }
 
+// @chunk telegram-adapter/whitelist-claim
+// generate_claim_code produces a short alphanumeric one-time passcode.
+// It uses the first 12 hex characters of a UUID, which gives ~48 bits of
+// entropy — sufficient for an interactive first-run flow.
+fn generate_claim_code() -> String {
+    Uuid::new_v4().simple().to_string()[..12].to_string()
+}
+
+async fn handle_claim(
+    token: &str,
+    state: &mut TelegramState,
+    state_path: &Path,
+    chat_id: i64,
+    user_id: Option<i64>,
+    claim_code: Option<&str>,
+    args: &str,
+) -> Result<()> {
+    let Some(uid) = user_id else {
+        telegram_send_message(token, chat_id, "cannot identify sender").await?;
+        return Ok(());
+    };
+
+    // Already whitelisted — no-op.
+    if state.whitelist.contains(&uid) {
+        telegram_send_message(token, chat_id, "you are already whitelisted").await?;
+        return Ok(());
+    }
+
+    let submitted = args.trim();
+    match claim_code {
+        None => {
+            // Whitelist already has at least one user; claiming is closed.
+            telegram_send_message(token, chat_id, "whitelist is already claimed").await?;
+        }
+        Some(code) if submitted == code => {
+            state.whitelist.insert(uid);
+            save_state(state_path, state).await?;
+            eprintln!("kelix-adapter: whitelist claimed by user_id={uid}");
+            telegram_send_message(token, chat_id, "you have been added to the whitelist").await?;
+        }
+        Some(_) => {
+            telegram_send_message(token, chat_id, "invalid claim code").await?;
+        }
+    }
+    Ok(())
+}
+// @end-chunk
+
 fn new_id(prefix: &str) -> String {
     format!("{prefix}-{}", Uuid::new_v4())
 }
@@ -902,4 +997,17 @@ mod tests {
         );
     }
 
+    #[test]
+    fn generate_claim_code_has_expected_length() {
+        let code = super::generate_claim_code();
+        assert_eq!(code.len(), 12);
+        assert!(code.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn generate_claim_code_is_unique() {
+        let a = super::generate_claim_code();
+        let b = super::generate_claim_code();
+        assert_ne!(a, b);
+    }
 }
