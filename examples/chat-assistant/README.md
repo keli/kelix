@@ -1,11 +1,46 @@
 # Example: Multi-Group Chat Assistant
 
-Status: Proposal
+Status: Example
 Last updated: February 24, 2026
 
 ## Overview
 
 This example describes how to build a chat assistant similar to OpenClaw on top of kelix: one persistent session per group or channel, reachable via existing messaging platforms (Telegram, Slack, Discord, etc.), with simple questions answered directly by the orchestrator and complex tasks handled as short-lived work items delegated to worker subagents.
+
+## Usage
+
+### Prerequisites
+
+- `podman` installed and daemon running
+- `kelix` binary available in your `PATH`
+- `kelix:latest` image built locally (for example, `./docker/build.sh`)
+- Claude auth configured (OAuth token or Anthropic API key)
+
+### Authentication Setup
+
+Option A (OAuth token):
+
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN=...
+```
+
+Option B (API key):
+
+```bash
+export ANTHROPIC_API_KEY=...
+```
+
+### Start Via Adapter
+
+```bash
+kelix-adapter start examples/chat-assistant/adapter.toml
+```
+
+### Start Single Session Directly (Testing)
+
+```bash
+kelix start examples/chat-assistant/kelix.toml --headless
+```
 
 ## Architecture
 

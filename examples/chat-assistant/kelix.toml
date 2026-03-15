@@ -1,0 +1,62 @@
+# kelix.toml — chat assistant profile
+#
+# Runs one long-lived orchestrator session per chat group/channel, with
+# on-demand worker subagents for complex tasks.
+#
+# Usage:
+#   kelix start examples/chat-assistant/kelix.toml --headless
+#
+# Prerequisites:
+#   - podman installed and daemon running
+#   - kelix:latest image built: ./docker/build.sh
+#   - Claude authentication configured (OAuth token or API key)
+#   - /prompts is bundled in the image; optionally mount /prompts to override defaults.
+
+[agent]
+max_spawns            = 100
+max_concurrent_spawns = 4
+max_wall_time_secs    = 0
+
+# Claude orchestrator (Option A — OAuth token)
+[subagents.orchestrator]
+start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
+stop_command = "podman stop kelix-{session_id}"
+lifecycle    = "session"
+
+# Claude orchestrator (Option B — API key)
+# [subagents.orchestrator]
+# start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
+# stop_command  = "podman stop kelix-{session_id}"
+# lifecycle     = "session"
+
+[subagents.research-agent]
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/research-agent.md"
+lifecycle = "task"
+
+[subagents.coding-agent]
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/coding-agent.md"
+lifecycle = "task"
+
+[subagents.review-agent]
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/review-agent.md"
+lifecycle = "task"
+
+[subagents.knowledge-agent]
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/knowledge-agent.md"
+lifecycle = "task"
+volume    = "knowledge-vol"
+
+[tools.shell]
+enabled          = true
+timeout_secs     = 600
+max_output_bytes = 131072
+allowed_commands = ["podman", "git", "bash", "sh"]
+
+[approval]
+shell_gate = "none"
+plan_gate  = "none"
+merge_gate = "human"
+
+[budget]
+max_tokens         = 500000
+on_budget_exceeded = "reject_spawn"
