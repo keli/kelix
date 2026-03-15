@@ -33,8 +33,11 @@ export ANTHROPIC_API_KEY=...
 ### Start Via Adapter
 
 ```bash
-kelix-adapter start examples/chat-assistant/adapter.toml
+export TELEGRAM_BOT_TOKEN=...
+kelix adapter --provider telegram
 ```
+
+`kelix adapter --provider telegram` defaults to `--gateway-url ws://127.0.0.1:9000`. Run a separate gateway WebSocket process before starting the adapter.
 
 ### Start Single Session Directly (Testing)
 
@@ -96,6 +99,8 @@ subagents = ["research-agent", "knowledge-agent"]
 [groups.general]
 # no entry → all registered subagents available
 ```
+
+`examples/chat-assistant/adapter.toml` documents a proposed future per-group filtering format. This per-group subagent filtering is not yet implemented in the adapter.
 
 All subagents listed here must be registered in the core config. The adapter passes the intersection as `--enabled-subagents` when starting the session.
 
