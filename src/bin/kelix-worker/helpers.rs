@@ -1,17 +1,17 @@
 use serde_json::Value;
 use std::process::Command;
 
-use super::types::WorkerResult;
+use super::types::{BlockedReason, FailureKind, WorkerResult, WorkerStatus};
 
 // @chunk kelix-worker/helpers
-pub fn emit_failure(task_id: &str, branch: &str, error: &str, kind: &str) {
+pub fn emit_failure(task_id: &str, branch: &str, error: &str, kind: FailureKind) {
     let result = WorkerResult {
         task_id: task_id.to_string(),
-        status: "failure".into(),
+        status: WorkerStatus::Failure,
         branch: branch.to_string(),
         summary: truncate(error, 200),
         error: error.to_string(),
-        failure_kind: kind.to_string(),
+        failure_kind: Some(kind),
         ..Default::default()
     };
     println!("{}", serde_json::to_string(&result).unwrap());
@@ -55,20 +55,36 @@ pub fn extract_json_object(s: &str) -> Option<Value> {
     serde_json::from_str(&s[start..=end]).ok()
 }
 
+// @chunk kelix-worker/parse-worker-result-value
+// Parse a WorkerResult from a raw serde_json::Value, tolerating lenient LLM synonyms
+// for status, failure_kind, and blocked_reason. Uses WorkerStatus::from_str_lenient
+// so that "rejected"/"failed" are mapped to Failure rather than silently dropped.
 pub fn parse_worker_result_value(v: Value, task_id: &str, branch: &str) -> WorkerResult {
-    let status = v
+    let status_str = v
         .get("status")
         .and_then(|s| s.as_str())
-        // Default to "failure" when no status field is present:
-        // unknown outcome must not be silently reported as success.
         .unwrap_or("failure");
+    // Unknown status strings default to Failure so the orchestrator always sees
+    // a valid protocol value even when the LLM produces something unexpected.
+    let status = WorkerStatus::from_str_lenient(status_str).unwrap_or(WorkerStatus::Failure);
+
+    let failure_kind = v
+        .get("failure_kind")
+        .and_then(|s| s.as_str())
+        .and_then(|s| serde_json::from_value::<FailureKind>(Value::String(s.to_string())).ok());
+
+    let blocked_reason = v
+        .get("blocked_reason")
+        .and_then(|s| s.as_str())
+        .and_then(|s| serde_json::from_value::<BlockedReason>(Value::String(s.to_string())).ok());
+
     WorkerResult {
         task_id: v
             .get("task_id")
             .and_then(|s| s.as_str())
             .unwrap_or(task_id)
             .to_string(),
-        status: status.to_string(),
+        status,
         branch: v
             .get("branch")
             .and_then(|s| s.as_str())
@@ -89,19 +105,12 @@ pub fn parse_worker_result_value(v: Value, task_id: &str, branch: &str) -> Worke
             .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string(),
-        failure_kind: v
-            .get("failure_kind")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
-        blocked_reason: v
-            .get("blocked_reason")
-            .and_then(|s| s.as_str())
-            .unwrap_or("")
-            .to_string(),
+        failure_kind,
+        blocked_reason,
         handover: v.get("handover").cloned(),
     }
 }
+// @end-chunk
 
 pub fn parse_worker_result_text(
     text: &str,
@@ -213,8 +222,8 @@ mod tests {
         let stdout = "```json\n{\n  \"task_id\": \"t1\",\n  \"status\": \"blocked\",\n  \"blocked_reason\": \"approval_required\"\n}\n```";
         let parsed = parse_opencode_worker_output(stdout, "fallback-task", "main").unwrap();
         assert_eq!(parsed.task_id, "t1");
-        assert_eq!(parsed.status, "blocked");
-        assert_eq!(parsed.blocked_reason, "approval_required");
+        assert_eq!(parsed.status, WorkerStatus::Blocked);
+        assert_eq!(parsed.blocked_reason, Some(BlockedReason::ApprovalRequired));
     }
 
     #[test]
@@ -222,7 +231,7 @@ mod tests {
         let stdout = "some log line\n{\"task_id\":\"t1\",\"status\":\"failure\",\"summary\":\"compile failed\"}";
         let parsed = parse_opencode_worker_output(stdout, "fallback-task", "main").unwrap();
         assert_eq!(parsed.task_id, "t1");
-        assert_eq!(parsed.status, "failure");
+        assert_eq!(parsed.status, WorkerStatus::Failure);
         assert_eq!(parsed.summary, "compile failed");
     }
 
@@ -230,5 +239,42 @@ mod tests {
     fn test_parse_worker_result_text_rejects_plain_text() {
         let err = parse_worker_result_text("done, all tests pass", "t1", "main").unwrap_err();
         assert!(err.contains("not valid JSON worker result"));
+    }
+
+    #[test]
+    fn test_parse_worker_result_value_maps_rejected_to_failure() {
+        let v = serde_json::json!({"task_id": "t1", "status": "rejected", "branch": "main"});
+        let r = parse_worker_result_value(v, "t1", "main");
+        assert_eq!(r.status, WorkerStatus::Failure);
+    }
+
+    #[test]
+    fn test_parse_worker_result_value_maps_failed_to_failure() {
+        let v = serde_json::json!({"task_id": "t1", "status": "failed", "branch": "main"});
+        let r = parse_worker_result_value(v, "t1", "main");
+        assert_eq!(r.status, WorkerStatus::Failure);
+    }
+
+    #[test]
+    fn test_parse_worker_result_value_unknown_status_defaults_to_failure() {
+        let v = serde_json::json!({"task_id": "t1", "status": "mystery", "branch": "main"});
+        let r = parse_worker_result_value(v, "t1", "main");
+        assert_eq!(r.status, WorkerStatus::Failure);
+    }
+
+    #[test]
+    fn test_emit_failure_produces_valid_json() {
+        // Redirect stdout is not possible in unit tests, so test WorkerResult serialization directly.
+        let result = WorkerResult {
+            task_id: "t1".to_string(),
+            status: WorkerStatus::Failure,
+            failure_kind: Some(FailureKind::Implementation),
+            error: "something broke".to_string(),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["status"], "failure");
+        assert_eq!(v["failure_kind"], "implementation");
     }
 }

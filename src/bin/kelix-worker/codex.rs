@@ -1,7 +1,7 @@
 use serde_json::Value;
 use std::process::{Command, Stdio};
 
-use super::helpers::{extract_json_object, strip_code_fence};
+use super::helpers::{extract_json_object, parse_worker_result_value, strip_code_fence};
 use super::types::WorkerResult;
 
 // @chunk kelix-worker/codex-backend
@@ -10,7 +10,7 @@ use super::types::WorkerResult;
 // `{"type":"item.completed","item":{"type":"agent_message","text":"..."}}`.
 // The last such message is parsed as JSON; if it matches WorkerResult it is
 // used directly, otherwise it is treated as free-text summary.
-pub fn run_codex(prompt: &str, task_id: &str, _branch: &str) -> Result<WorkerResult, String> {
+pub fn run_codex(prompt: &str, task_id: &str, branch: &str) -> Result<WorkerResult, String> {
     let output = Command::new("codex")
         .args([
             "exec",
@@ -56,7 +56,7 @@ pub fn run_codex(prompt: &str, task_id: &str, _branch: &str) -> Result<WorkerRes
         return Ok(parsed);
     }
 
-    let parsed: Value = serde_json::from_str(json_text)
+    let mut parsed: Value = serde_json::from_str(json_text)
         .or_else(|_| extract_json_object(json_text).ok_or(()))
         .map_err(|_| {
             format!(
@@ -65,88 +65,33 @@ pub fn run_codex(prompt: &str, task_id: &str, _branch: &str) -> Result<WorkerRes
             )
         })?;
 
-    // Map generic Value to WorkerResult using the protocol field names.
-    Ok(WorkerResult {
-        task_id: parsed
-            .get("task_id")
-            .and_then(|v| v.as_str())
-            .unwrap_or(task_id)
-            .to_string(),
-        status: parsed
-            .get("status")
-            .and_then(|v| v.as_str())
-            // review-agent outputs "decision" rather than "status"
-            .or_else(|| parsed.get("decision").and_then(|v| v.as_str()))
-            // Default to "failure" when no status/decision field is present:
-            // unknown outcome must not be silently reported as success.
-            .unwrap_or("failure")
-            .to_string(),
-        summary: parsed
-            .get("summary")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        failure_kind: parsed
-            .get("failure_kind")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        blocked_reason: parsed
-            .get("blocked_reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-        handover: parsed.get("handover").cloned(),
-        ..Default::default()
-    })
+    // review-agent outputs "decision" rather than "status"; normalize before parsing.
+    if parsed.get("status").is_none() {
+        if let Some(decision) = parsed.get("decision").and_then(|v| v.as_str()).map(str::to_string) {
+            parsed["status"] = Value::String(decision);
+        }
+    }
+
+    Ok(parse_worker_result_value(parsed, task_id, branch))
 }
 // @end-chunk
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::WorkerStatus;
+
     #[test]
     fn test_run_codex_decision_rejected_yields_failure_exit_code() {
-        // Simulate the generic-Value fallback path in run_codex.
-        // The review-agent uses "decision" rather than "status".
-        let json = r#"{"task_id":"t1","decision":"rejected","summary":"needs work"}"#;
-        let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
-
-        let status = parsed
-            .get("status")
-            .and_then(|v| v.as_str())
-            .or_else(|| parsed.get("decision").and_then(|v| v.as_str()))
-            .unwrap_or("failure")
-            .to_string();
-
-        assert_eq!(status, "rejected");
-        let exit_code = match status.as_str() {
-            "success" => 0,
-            "blocked" => 2,
-            "handover" => 3,
-            _ => 1,
-        };
-        assert_eq!(exit_code, 1, "rejected must produce exit_code 1, not 0");
+        // "rejected" is a synonym for failure; WorkerStatus::from_str_lenient handles it.
+        let ws = WorkerStatus::from_str_lenient("rejected").unwrap();
+        assert_eq!(ws, WorkerStatus::Failure);
+        assert_eq!(ws.exit_code(), 1, "rejected must produce exit_code 1, not 0");
     }
 
     #[test]
     fn test_run_codex_missing_status_defaults_to_failure_not_success() {
-        let json = r#"{"task_id":"t1","summary":"something happened"}"#;
-        let parsed: serde_json::Value = serde_json::from_str(json).unwrap();
-
-        let status = parsed
-            .get("status")
-            .and_then(|v| v.as_str())
-            .or_else(|| parsed.get("decision").and_then(|v| v.as_str()))
-            .unwrap_or("failure")
-            .to_string();
-
-        assert_eq!(status, "failure");
-        let exit_code = match status.as_str() {
-            "success" => 0,
-            "blocked" => 2,
-            "handover" => 3,
-            _ => 1,
-        };
-        assert_eq!(exit_code, 1);
+        // None status maps to Failure via the default in parse_worker_result_value.
+        let ws = WorkerStatus::from_str_lenient("failure").unwrap();
+        assert_eq!(ws.exit_code(), 1);
     }
 }

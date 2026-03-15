@@ -87,7 +87,7 @@ fn main() {
                         "failed to read --system-prompt-file {}: {e}",
                         path.display()
                     ),
-                    "implementation",
+                    types::FailureKind::Implementation,
                 );
                 std::process::exit(1);
             }
@@ -96,7 +96,7 @@ fn main() {
 
     let mut raw = String::new();
     if io::stdin().read_to_string(&mut raw).is_err() {
-        emit_failure("unknown", "", "failed to read stdin", "implementation");
+        emit_failure("unknown", "", "failed to read stdin", types::FailureKind::Implementation);
         std::process::exit(1);
     }
 
@@ -107,7 +107,7 @@ fn main() {
                 "unknown",
                 "",
                 &format!("malformed stdin JSON: {e}"),
-                "implementation",
+                types::FailureKind::Implementation,
             );
             std::process::exit(1);
         }
@@ -118,14 +118,15 @@ fn main() {
 
     // @chunk kelix-worker/prompt-construction
     // Prepend system prompt and non-optional runtime contract before task context.
+    let contract: &str = &*WORKER_RUNTIME_CONTRACT;
     let full_prompt = if cli.system_prompt.is_empty() {
         format!(
-            "{WORKER_RUNTIME_CONTRACT}\n\n# Task Context\ntask_id: {task_id}\nbranch: {branch}\n\n# Task\n{}",
+            "{contract}\n\n# Task Context\ntask_id: {task_id}\nbranch: {branch}\n\n# Task\n{}",
             input.prompt
         )
     } else {
         format!(
-            "{}\n\n{WORKER_RUNTIME_CONTRACT}\n\n# Task Context\ntask_id: {task_id}\nbranch: {branch}\n\n# Task\n{}",
+            "{}\n\n{contract}\n\n# Task Context\ntask_id: {task_id}\nbranch: {branch}\n\n# Task\n{}",
             cli.system_prompt, input.prompt
         )
     };
@@ -140,7 +141,7 @@ fn main() {
     let result = match agent_output {
         Ok(r) => r,
         Err(e) => {
-            emit_failure(task_id, branch, &e, "implementation");
+            emit_failure(task_id, branch, &e, types::FailureKind::Implementation);
             std::process::exit(1);
         }
     };
@@ -148,17 +149,12 @@ fn main() {
     let result = match validate_worker_result(result, task_id, branch) {
         Ok(r) => r,
         Err(e) => {
-            emit_failure(task_id, branch, &e, "implementation");
+            emit_failure(task_id, branch, &e, types::FailureKind::Implementation);
             std::process::exit(1);
         }
     };
 
-    let exit_code = match result.status.as_str() {
-        "success" => 0,
-        "blocked" => 2,
-        "handover" => 3,
-        _ => 1,
-    };
+    let exit_code = result.status.exit_code();
 
     println!("{}", serde_json::to_string(&result).unwrap());
     std::process::exit(exit_code);
@@ -166,6 +162,8 @@ fn main() {
 
 // @chunk kelix-worker/result-validation
 // Enforce protocol-valid worker status values regardless of prompt content.
+// status is already a typed enum so deserialization handles validation;
+// this function fills in missing context fields from the spawn input.
 fn validate_worker_result(
     mut result: WorkerResult,
     task_id: &str,
@@ -177,29 +175,17 @@ fn validate_worker_result(
     if result.branch.is_empty() {
         result.branch = branch.to_string();
     }
-
-    result.status = match result.status.as_str() {
-        "rejected" | "failed" => "failure".to_string(),
-        other => other.to_string(),
-    };
-
-    match result.status.as_str() {
-        "success" | "failure" | "blocked" | "handover" => Ok(result),
-        other => Err(format!(
-            "worker produced invalid status '{other}'; expected success|failure|blocked|handover"
-        )),
-    }
+    Ok(result)
 }
 // @end-chunk
 
 #[cfg(test)]
 mod tests {
-    use super::types::{SpawnInput, WorkerResult};
+    use super::types::{SpawnInput, WorkerResult, WorkerStatus};
     use super::validate_worker_result;
 
     #[test]
     fn test_worker_result_deserialize_full() {
-        use super::types::WorkerResult;
         let json = r#"{
             "task_id": "t1",
             "status": "success",
@@ -209,8 +195,15 @@ mod tests {
         }"#;
         let r: WorkerResult = serde_json::from_str(json).unwrap();
         assert_eq!(r.task_id, "t1");
-        assert_eq!(r.status, "success");
+        assert_eq!(r.status, WorkerStatus::Success);
         assert_eq!(r.summary, "all done");
+    }
+
+    #[test]
+    fn test_worker_result_deserialize_rejects_unknown_status() {
+        // Unknown status must fail deserialization (typed enum).
+        let json = r#"{"task_id":"t1","status":"mystery","branch":"main"}"#;
+        assert!(serde_json::from_str::<WorkerResult>(json).is_err());
     }
 
     #[test]
@@ -221,23 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_worker_result_rejects_truly_unknown_status() {
-        let result = WorkerResult {
-            task_id: "t1".to_string(),
-            status: "mystery".to_string(),
-            branch: "main".to_string(),
-            ..Default::default()
-        };
-
-        let err = validate_worker_result(result, "t1", "main").unwrap_err();
-        assert!(err.contains("invalid status"));
-    }
-
-    #[test]
     fn test_validate_worker_result_fills_missing_task_context_fields() {
         let result = WorkerResult {
             task_id: String::new(),
-            status: "success".to_string(),
+            status: WorkerStatus::Success,
             branch: String::new(),
             ..Default::default()
         };
@@ -249,15 +229,10 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_worker_result_normalizes_rejected_to_failure() {
-        let result = WorkerResult {
-            task_id: "t1".to_string(),
-            status: "rejected".to_string(),
-            branch: "main".to_string(),
-            ..Default::default()
-        };
-
-        let normalized = validate_worker_result(result, "t1", "main").unwrap();
-        assert_eq!(normalized.status, "failure");
+    fn test_worker_status_exit_codes() {
+        assert_eq!(WorkerStatus::Success.exit_code(), 0);
+        assert_eq!(WorkerStatus::Failure.exit_code(), 1);
+        assert_eq!(WorkerStatus::Blocked.exit_code(), 2);
+        assert_eq!(WorkerStatus::Handover.exit_code(), 3);
     }
 }

@@ -1,7 +1,7 @@
 use std::process::{Command, Stdio};
 
 use super::helpers::{parse_opencode_worker_output, truncate};
-use super::types::WorkerResult;
+use super::types::{WorkerResult, WorkerStatus};
 
 // @chunk kelix-worker/opencode-backend
 // Invokes `opencode run` with the prompt and extracts the worker result.
@@ -22,7 +22,7 @@ pub fn run_opencode(prompt: &str, task_id: &str, branch: &str) -> Result<WorkerR
     let exit_code = output.status.code().unwrap_or(-1);
 
     if let Some(parsed) = parse_opencode_worker_output(&stdout, task_id, branch) {
-        if !output.status.success() && parsed.status == "success" {
+        if !output.status.success() && parsed.status == WorkerStatus::Success {
             return Err(format!(
                 "opencode exited with code {exit_code} but reported success"
             ));
@@ -46,28 +46,22 @@ pub fn run_opencode(prompt: &str, task_id: &str, branch: &str) -> Result<WorkerR
 
 #[cfg(test)]
 mod tests {
+    use super::super::types::WorkerStatus;
+
     #[test]
     fn test_run_opencode_missing_status_defaults_to_failure_not_success() {
-        let json = serde_json::json!({"task_id": "t1", "summary": "output without status"});
-        let status = json
-            .get("status")
-            .and_then(|s| s.as_str())
-            .unwrap_or("failure");
-
-        assert_eq!(status, "failure");
+        // WorkerStatus::from_str_lenient returns None for missing status;
+        // callers default to Failure.
+        assert_eq!(WorkerStatus::from_str_lenient("failure"), Some(WorkerStatus::Failure));
+        assert_eq!(WorkerStatus::from_str_lenient("unknown_xyz"), None);
     }
 
     #[test]
     fn test_exit_code_for_rejected_is_nonzero() {
         for bad_status in &["rejected", "failure", "failed", "unknown", ""] {
-            let exit_code = match *bad_status {
-                "success" => 0,
-                "blocked" => 2,
-                "handover" => 3,
-                _ => 1,
-            };
+            let ws = WorkerStatus::from_str_lenient(bad_status).unwrap_or(WorkerStatus::Failure);
             assert_ne!(
-                exit_code, 0,
+                ws.exit_code(), 0,
                 "status '{bad_status}' must not produce exit_code 0"
             );
         }
