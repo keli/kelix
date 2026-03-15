@@ -64,6 +64,73 @@ kelix start --example claude-codex-team
 - Claude Code as review-agent
 
 
+## Telegram Adapter
+
+The Telegram adapter lets you drive a kelix session from a Telegram group chat.
+
+### Setup
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
+2. Start a kelix session locally with the session name you want to use:
+
+```sh
+kelix start path/to/config.toml --session my-project
+```
+
+3. Create a Telegram group and set its title to exactly the session ID (e.g. `my-project`), then add the bot to the group.
+4. Start the adapter:
+
+```sh
+export TELEGRAM_BOT_TOKEN=<your-token>
+kelix adapter
+```
+
+Or pass the token directly:
+
+```sh
+kelix adapter --bot-token <your-token>
+```
+
+The adapter auto-binds a group to a session when the group title matches a known session ID. Send `/rebind` in the group to re-trigger binding after a rename.
+
+### First-run: claiming the whitelist
+
+On first run with no whitelist set, the adapter prints a one-time claim code:
+
+```
+kelix-adapter: whitelist is empty
+kelix-adapter: send '/claim abc123def456' to the bot to claim admin access
+```
+
+Send `/claim <code>` to the bot (in the group or as a direct message). The first user to send the correct code is added to the whitelist. The code expires when the adapter process exits.
+
+### Usage
+
+Once claimed, whitelisted users can interact in the group:
+
+| Command | Description |
+|---|---|
+| Any text message | Sent as input to the bound session |
+| `/ask <text>` or `/run <text>` | Explicit prompt (useful to avoid mention stripping) |
+| `@bot <text>` | Mention-style prompt |
+| `/status` | Show which session the group is bound to |
+| `/rebind` | Re-bind to a session matching the group title |
+| `/approve <request_id> <choice\|index>` | Respond to an approval request |
+| `/claim <code>` | Claim whitelist on first run |
+| `/help` | List commands |
+
+Only text messages are forwarded; voice, images, and other media are silently ignored.
+
+### Resetting state
+
+To clear all chat bindings and the whitelist:
+
+```sh
+kelix adapter --reset
+```
+
+State is stored at `~/.kelix/adapters/telegram-state.json` by default. Use `--state-path` to override.
+
 ## Build from Source
 
 The reference implementation is written in Rust.
