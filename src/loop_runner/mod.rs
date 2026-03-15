@@ -215,9 +215,40 @@ pub async fn run(
     tokio::pin!(startup_deadline);
     let mut startup_done = startup_timeout_secs == 0;
 
+    // @chunk loop-runner/inactivity-timeout
+    // Inactivity timeout: fires if the orchestrator produces no output for N seconds
+    // after the last received line. Detects stuck orchestrators (e.g. blocked on a
+    // backend call with no progress). Resets on every received line. 0 = disabled.
+    let inactivity_secs = config.agent.orchestrator_inactivity_timeout_secs;
+    let inactivity_duration = if inactivity_secs > 0 {
+        std::time::Duration::from_secs(inactivity_secs)
+    } else {
+        std::time::Duration::MAX
+    };
+    let inactivity_deadline = tokio::time::sleep(inactivity_duration);
+    tokio::pin!(inactivity_deadline);
+    // @end-chunk
+
     // Main select loop.
     loop {
         tokio::select! {
+            // Inactivity timeout: orchestrator has not produced output since the last line.
+            _ = &mut inactivity_deadline, if inactivity_secs > 0 => {
+                let _ = child.kill().await;
+                let stderr_text = collect_stderr(&mut stderr_line_rx);
+                let detail = if stderr_text.is_empty() {
+                    format!(
+                        "orchestrator did not respond for {inactivity_secs}s (no output). \
+                         Treating as stuck and killing."
+                    )
+                } else {
+                    format!(
+                        "orchestrator did not respond for {inactivity_secs}s. stderr:\n{stderr_text}"
+                    )
+                };
+                return Err(CoreError::OrchestratorExit(detail));
+            }
+
             // Startup timeout: orchestrator produced no output since session_start.
             _ = &mut startup_deadline, if !startup_done => {
                 let _ = child.kill().await;
@@ -349,6 +380,12 @@ pub async fn run(
                         }
                         startup_done = true;
                         last_raw_line = Some(line.clone());
+                        // Reset inactivity deadline on every received line.
+                        if inactivity_secs > 0 {
+                            inactivity_deadline.as_mut().reset(
+                                tokio::time::Instant::now() + inactivity_duration,
+                            );
+                        }
                         debug_log(debug_enabled, &format!("orchestrator -> core: {line}"));
 
                         let req: OrchestratorRequest = match serde_json::from_str(&line) {

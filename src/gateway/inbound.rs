@@ -50,12 +50,17 @@ pub async fn handle_inbound(ctx: &Arc<GatewayCtx>, inbound: GatewayInbound) -> a
             };
             // @end-chunk
 
+            // @chunk gateway/user-message-dispatch
+            // Forward the message to the running core process. If the write fails the
+            // pipe is broken (core has exited without the gateway noticing yet). Evict
+            // the stale handle so the next session_resume will spawn a fresh process,
+            // and surface a NoSession to the client so it can retry.
             match session {
                 Some(s) => {
                     let relay_id = id.clone();
                     let relay_text = text.clone();
                     let relay_sender_id = sender_id.clone();
-                    send_core_message(
+                    let send_result = send_core_message(
                         &s,
                         &AdapterMessage::UserMessage {
                             id,
@@ -64,13 +69,30 @@ pub async fn handle_inbound(ctx: &Arc<GatewayCtx>, inbound: GatewayInbound) -> a
                             channel_id: Some(session_id.clone()),
                         },
                     )
-                    .await?;
-                    let _ = ctx.events_tx.send(GatewayOutbound::UserMessageRelay {
-                        id: relay_id,
-                        session_id,
-                        text: relay_text,
-                        sender_id: relay_sender_id,
-                    });
+                    .await;
+                    match send_result {
+                        Ok(()) => {
+                            let _ = ctx.events_tx.send(GatewayOutbound::UserMessageRelay {
+                                id: relay_id,
+                                session_id,
+                                text: relay_text,
+                                sender_id: relay_sender_id,
+                            });
+                        }
+                        Err(_) => {
+                            // Pipe is broken — core has exited. Evict the stale handle so
+                            // the next session_resume re-spawns a fresh core process.
+                            {
+                                let mut state = ctx.state.lock().await;
+                                state.active_sessions.remove(&session_id);
+                            }
+                            let _ = ctx.events_tx.send(GatewayOutbound::NoSession {
+                                id: relay_id,
+                                session_id,
+                                message: "Core process disconnected; send session_resume to reconnect.".to_string(),
+                            });
+                        }
+                    }
                 }
                 None => {
                     let _ = ctx.events_tx.send(GatewayOutbound::NoSession {
@@ -81,6 +103,7 @@ pub async fn handle_inbound(ctx: &Arc<GatewayCtx>, inbound: GatewayInbound) -> a
                     });
                 }
             }
+            // @end-chunk
         }
         GatewayInbound::ApprovalResponse {
             id,

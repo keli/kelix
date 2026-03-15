@@ -31,6 +31,10 @@ pub struct AgentConfig {
     /// 0 disables the timeout. Default: 120.
     #[serde(default = "default_orchestrator_startup_timeout")]
     pub orchestrator_startup_timeout_secs: u64,
+    /// Seconds of silence from the orchestrator before treating it as stuck and killing it.
+    /// Resets each time a line is received. 0 disables the timeout. Default: 0 (disabled).
+    #[serde(default)]
+    pub orchestrator_inactivity_timeout_secs: u64,
 }
 
 impl Default for AgentConfig {
@@ -40,6 +44,7 @@ impl Default for AgentConfig {
             max_concurrent_spawns: 0,
             max_wall_time_secs: 0,
             orchestrator_startup_timeout_secs: default_orchestrator_startup_timeout(),
+            orchestrator_inactivity_timeout_secs: 0,
         }
     }
 }
@@ -243,6 +248,7 @@ shell_gate = "agent"
         writeln!(f, "").unwrap();
         let config = load(f.path()).unwrap();
         assert_eq!(config.agent.max_spawns, 0);
+        assert_eq!(config.agent.orchestrator_inactivity_timeout_secs, 0);
         assert!(config.tools.shell.enabled);
         assert!(config.plan.plan_reviewers.is_empty());
         assert_eq!(config.plan.max_reflection_rounds, 3);
