@@ -144,7 +144,6 @@ pub fn run_codex_turn(
                 backend: "codex",
                 session_id,
                 stdout: &output.stdout,
-                stderr: &output.stderr,
             },
         );
     }

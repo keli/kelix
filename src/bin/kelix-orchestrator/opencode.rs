@@ -151,7 +151,6 @@ pub fn run_opencode_turn(prompt: &str, log_file: Option<&Path>) -> Result<String
                 backend: "opencode",
                 session_id: None,
                 stdout: &output.stdout,
-                stderr: &output.stderr,
             },
         );
     }

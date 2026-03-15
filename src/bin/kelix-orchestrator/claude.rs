@@ -136,7 +136,6 @@ pub fn run_claude_turn(
                 backend: "claude",
                 session_id,
                 stdout: &output.stdout,
-                stderr: &output.stderr,
             },
         );
     }

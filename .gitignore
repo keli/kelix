@@ -21,3 +21,6 @@ Cargo.lock
 
 # Runtime state
 .kelix/
+
+# Local Claude Code settings
+.claude/

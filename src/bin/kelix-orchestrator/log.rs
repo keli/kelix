@@ -9,22 +9,16 @@ use std::process::Stdio;
 
 /// Returns the `Stdio` to use for an agent's stderr.
 ///
-/// With a log file: pipe stderr so it can be written to the file.
-/// Without a log file: inherit so it passes through to the caller's stderr,
-/// which is visible in debug output.
-pub fn stderr_stdio(log_file: Option<&Path>) -> Stdio {
-    if log_file.is_some() {
-        Stdio::piped()
-    } else {
-        Stdio::inherit()
-    }
+/// Always inherit so stderr passes through to the caller in real time,
+/// which is visible in debug output regardless of whether a log file is set.
+pub fn stderr_stdio(_log_file: Option<&Path>) -> Stdio {
+    Stdio::inherit()
 }
 
 pub struct TurnLog<'a> {
     pub backend: &'a str,
     pub session_id: Option<&'a str>,
     pub stdout: &'a [u8],
-    pub stderr: &'a [u8],
 }
 
 pub fn append_turn_log(path: &Path, entry: &TurnLog<'_>) {
@@ -38,16 +32,8 @@ pub fn append_turn_log(path: &Path, entry: &TurnLog<'_>) {
         entry.session_id.unwrap_or("new")
     );
     if !entry.stdout.is_empty() {
-        let _ = writeln!(f, "--- stdout ---");
         let _ = f.write_all(entry.stdout);
         if !entry.stdout.ends_with(b"\n") {
-            let _ = writeln!(f);
-        }
-    }
-    if !entry.stderr.is_empty() {
-        let _ = writeln!(f, "--- stderr ---");
-        let _ = f.write_all(entry.stderr);
-        if !entry.stderr.ends_with(b"\n") {
             let _ = writeln!(f);
         }
     }
