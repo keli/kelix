@@ -36,7 +36,7 @@ pub async fn run_subagent_process(
     max_output_bytes: usize,
     grace_period_secs: u64,
 ) -> ProcessResult {
-    let argv = match crate::policy::parse_command(&config.command) {
+    let argv = match crate::policy::parse_command(&config.start_command) {
         Ok(v) => v,
         Err(e) => {
             return ProcessResult {
@@ -176,7 +176,8 @@ mod tests {
 
     fn basic_config(command: &str) -> SubagentConfig {
         SubagentConfig {
-            command: command.to_string(),
+            start_command: command.to_string(),
+            stop_command: None,
             lifecycle: crate::config::Lifecycle::Task,
             volume: None,
         }

@@ -100,29 +100,29 @@ max_concurrent_spawns = 3
 max_wall_time_secs    = 3600  # 1-hour limit per change session
 
 [subagents.orchestrator]
-command   = "podman run --rm -i my-orchestrator-image"
+start_command = "podman run --rm -i my-orchestrator-image"
 lifecycle = "session"
 
 [subagents.observe-agent]
-command   = "podman run --rm -i --network=host --cpus=1 --memory=1g my-observe-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=1 --memory=1g my-observe-agent-image"
 lifecycle = "task"
 # --network=host required to reach internal services (Prometheus, k8s API, Proxmox)
 
 [subagents.planning-agent]
-command   = "podman run --rm -i --cpus=1 --memory=2g my-planning-agent-image"
+start_command = "podman run --rm -i --cpus=1 --memory=2g my-planning-agent-image"
 lifecycle = "task"
 
 [subagents.infra-agent]
-command   = "podman run --rm -i --network=host --cpus=2 --memory=4g my-infra-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=2 --memory=4g my-infra-agent-image"
 lifecycle = "task"
 # SSH keys and cloud credentials injected via secret-agent tmpfs volume
 
 [subagents.review-agent]
-command   = "podman run --rm -i --cpus=1 --memory=2g my-review-agent-image"
+start_command = "podman run --rm -i --cpus=1 --memory=2g my-review-agent-image"
 lifecycle = "task"
 
 [subagents.secret-agent]
-command   = "podman run --rm -i my-secret-agent-image"
+start_command = "podman run --rm -i my-secret-agent-image"
 lifecycle = "task"
 
 [tools.shell]

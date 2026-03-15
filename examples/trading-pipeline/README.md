@@ -267,56 +267,56 @@ max_concurrent_spawns = 6
 max_wall_time_secs    = 0    # not enforced
 
 [subagents.orchestrator]
-command   = "podman run --rm -i my-orchestrator-image"
+start_command = "podman run --rm -i my-orchestrator-image"
 lifecycle = "session"
 
 [subagents.planning-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
 lifecycle = "task"
 
 [subagents.research-agent]
-command   = "podman run --rm -i --network=host --cpus=1 --memory=2g my-research-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=1 --memory=2g my-research-agent-image"
 lifecycle = "task"
 
 [subagents.knowledge-agent]
-command   = "podman run --rm -i my-knowledge-agent-image"
+start_command = "podman run --rm -i my-knowledge-agent-image"
 lifecycle = "task"
 volume    = "knowledge-vol"
 
 [subagents.coding-agent]
-command   = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
+start_command = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
 lifecycle = "task"
 
 [subagents.backtest-agent]
-command   = "podman run --rm -i --cpus=4 --memory=16g my-backtest-agent-image"
+start_command = "podman run --rm -i --cpus=4 --memory=16g my-backtest-agent-image"
 lifecycle = "task"
 # No GPU required for backtesting; CPU-bound vectorised simulation
 
 [subagents.train-agent]
-command   = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=8 --memory=32g --network=host my-train-agent-image"
+start_command = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=8 --memory=32g --network=host my-train-agent-image"
 lifecycle = "task"
 # For multi-node GPU: see ml-training.md §GPU Resource Management
 
 [subagents.eval-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-eval-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-eval-agent-image"
 lifecycle = "task"
 
 [subagents.review-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
 lifecycle = "task"
 
 [subagents.data-agent]
-command   = "podman run --rm -i --network=host --cpus=4 --memory=8g my-data-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=4 --memory=8g my-data-agent-image"
 lifecycle = "task"
 volume    = "data-cache-vol"
 
 [subagents.monitor-agent]
-command   = "podman run --rm -i --network=host --cpus=1 --memory=2g my-monitor-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=1 --memory=2g my-monitor-agent-image"
 lifecycle = "task"
 # --network=host required to reach broker API
 
 [subagents.secret-agent]
-command   = "podman run --rm -i my-secret-agent-image"
+start_command = "podman run --rm -i my-secret-agent-image"
 lifecycle = "task"
 
 [tools.shell]

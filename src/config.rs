@@ -55,7 +55,14 @@ fn default_orchestrator_startup_timeout() -> u64 {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SubagentConfig {
-    pub command: String,
+    pub start_command: String,
+    /// Optional command to run when the orchestrator process needs to be stopped.
+    /// Executed before killing the child process. Supports the same env-var
+    /// expansion as `start_command`. Useful for container runtimes (e.g.
+    /// `podman stop kelix-{session_id}`) that don't forward signals to the
+    /// container when the outer process is killed.
+    #[serde(default)]
+    pub stop_command: Option<String>,
     #[serde(default)]
     pub lifecycle: Lifecycle,
     pub volume: Option<String>,
@@ -212,10 +219,10 @@ mod tests {
             f,
             r#"
 [subagents.orchestrator]
-command = "echo orchestrator"
+start_command = "echo orchestrator"
 
 [subagents.coding-agent]
-command = "echo worker"
+start_command = "echo worker"
 "#
         )
         .unwrap();
@@ -232,7 +239,7 @@ command = "echo worker"
             f,
             r#"
 [subagents.orchestrator]
-command = "echo orch"
+start_command = "echo orch"
 
 [approval]
 shell_gate = "agent"

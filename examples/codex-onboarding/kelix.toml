@@ -11,8 +11,9 @@ max_concurrent_spawns = 1
 max_wall_time_secs    = 0
 
 [subagents.orchestrator]
-command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-orchestrator --agent codex --system-prompt-file /prompts/onboarding-orchestrator.md"
-lifecycle = "session"
+start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-orchestrator --agent codex --system-prompt-file /prompts/onboarding-orchestrator.md"
+stop_command = "podman stop kelix-{session_id}"
+lifecycle    = "session"
 
 [tools.shell]
 enabled          = true

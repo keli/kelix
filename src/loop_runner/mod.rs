@@ -71,7 +71,10 @@ pub async fn run(
         .ok_or_else(|| CoreError::UnknownSubagent("orchestrator".to_string()))?
         .clone();
 
-    let argv = crate::policy::parse_command(&orchestrator_config.command)?;
+    // Expand {session_id} placeholder in command strings before env-var expansion.
+    let expand_session = |s: &str| s.replace("{session_id}", &session.id);
+    let stop_command = orchestrator_config.stop_command.as_deref().map(expand_session);
+    let argv = crate::policy::parse_command(&expand_session(&orchestrator_config.start_command))?;
     let (program, args) = argv
         .split_first()
         .ok_or_else(|| CoreError::InvalidCommand("orchestrator command is empty".to_string()))?;
@@ -234,7 +237,7 @@ pub async fn run(
         tokio::select! {
             // Inactivity timeout: orchestrator has not produced output since the last line.
             _ = &mut inactivity_deadline, if inactivity_secs > 0 => {
-                let _ = child.kill().await;
+                graceful_kill(&mut child, stop_command.as_deref()).await;
                 let stderr_text = collect_stderr(&mut stderr_line_rx);
                 let detail = if stderr_text.is_empty() {
                     format!(
@@ -251,12 +254,12 @@ pub async fn run(
 
             // Startup timeout: orchestrator produced no output since session_start.
             _ = &mut startup_deadline, if !startup_done => {
-                let _ = child.kill().await;
+                graceful_kill(&mut child, stop_command.as_deref()).await;
                 let stderr_text = collect_stderr(&mut stderr_line_rx);
                 let detail = if stderr_text.is_empty() {
                     format!(
                         "orchestrator did not respond within {startup_timeout_secs}s of session_start \
-                         (no stderr output). Check auth credentials and [subagents.orchestrator].command."
+                         (no stderr output). Check auth credentials and [subagents.orchestrator].start_command."
                     )
                 } else {
                     format!(
@@ -275,7 +278,7 @@ pub async fn run(
                 };
                 let _ = write_message(&mut orch_stdin, &abort).await;
                 drop(orch_stdin);
-                graceful_kill(&mut child).await;
+                graceful_kill(&mut child, stop_command.as_deref()).await;
                 session.mark_suspended();
                 persist_session_state(session).await;
                 return Ok(LoopExit::Suspended { reason: "wall-clock time limit exceeded" });
@@ -334,7 +337,7 @@ pub async fn run(
                         };
                         let _ = write_message(&mut orch_stdin, &abort).await;
                         drop(orch_stdin);
-                        graceful_kill(&mut child).await;
+                        graceful_kill(&mut child, stop_command.as_deref()).await;
                         session.mark_suspended();
                         persist_session_state(session).await;
                         return Ok(LoopExit::Suspended { reason: "session ended by adapter" });
@@ -428,20 +431,36 @@ pub async fn run(
     // on EOF; without dropping stdin here, core can block indefinitely on wait().
     drop(orch_stdin);
     // Wait for orchestrator to exit.
-    graceful_kill(&mut child).await;
+    graceful_kill(&mut child, stop_command.as_deref()).await;
     // @end-chunk
     Ok(LoopExit::Suspended { reason: "task complete" })
 }
 
+// @chunk loop-runner/graceful-kill
 // Wait up to 5 s for the child to exit on its own, then kill it.
-// This handles backends (e.g. claude) that may be mid-turn when the session ends.
-async fn graceful_kill(child: &mut tokio::process::Child) {
+// If stop_command is set, run it first so container runtimes (e.g. podman) can
+// stop the inner container before the outer process is force-killed. The stop
+// command gets up to 10 s; after that the child is killed unconditionally.
+async fn graceful_kill(child: &mut tokio::process::Child, stop_command: Option<&str>) {
+    if let Some(cmd) = stop_command {
+        if let Ok(argv) = crate::policy::parse_command(cmd) {
+            if let Some((program, args)) = argv.split_first() {
+                let stop_timeout = tokio::time::Duration::from_secs(10);
+                let _ = tokio::time::timeout(
+                    stop_timeout,
+                    tokio::process::Command::new(program).args(args).status(),
+                )
+                .await;
+            }
+        }
+    }
     let timeout = tokio::time::Duration::from_secs(5);
     if tokio::time::timeout(timeout, child.wait()).await.is_err() {
         let _ = child.kill().await;
         let _ = child.wait().await;
     }
 }
+// @end-chunk
 
 #[cfg(test)]
 mod tests {

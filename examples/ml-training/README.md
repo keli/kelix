@@ -239,37 +239,37 @@ max_concurrent_spawns = 4    # matches available GPU count
 max_wall_time_secs    = 0    # not enforced
 
 [subagents.orchestrator]
-command   = "podman run --rm -i my-orchestrator-image"
+start_command = "podman run --rm -i my-orchestrator-image"
 lifecycle = "session"
 
 [subagents.planning-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
 lifecycle = "task"
 
 [subagents.research-agent]
-command   = "podman run --rm -i --network=host --cpus=1 --memory=2g my-research-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=1 --memory=2g my-research-agent-image"
 lifecycle = "task"
 
 [subagents.data-agent]
-command   = "podman run --rm -i --network=host --cpus=4 --memory=16g my-data-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=4 --memory=16g my-data-agent-image"
 lifecycle = "task"
 volume    = "dataset-cache-vol"   # local dataset cache across runs
 
 [subagents.train-agent]
-command   = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=8 --memory=32g --network=host my-train-agent-image"
+start_command = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=8 --memory=32g --network=host my-train-agent-image"
 lifecycle = "task"
 # GPU device allocation; adjust per hardware. Object store access requires --network=host.
 
 [subagents.eval-agent]
-command   = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=4 --memory=16g --network=host my-eval-agent-image"
+start_command = "podman run --rm -i --device nvidia.com/gpu=1 --cpus=4 --memory=16g --network=host my-eval-agent-image"
 lifecycle = "task"
 
 [subagents.coding-agent]
-command   = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
+start_command = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
 lifecycle = "task"
 
 [subagents.review-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
 lifecycle = "task"
 
 [tools.shell]
@@ -303,7 +303,7 @@ For a single workstation or a small set of GPU nodes reachable via SSH, use `pod
 
 ```toml
 [subagents.train-agent]
-command   = "podman --remote --connection gpu-node-1 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
+start_command = "podman --remote --connection gpu-node-1 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
 lifecycle = "task"
 ```
 
@@ -312,11 +312,11 @@ For a pool of identical GPU nodes, define one `[subagents.train-agent-*]` entry 
 ```toml
 # Two nodes, one GPU each — max 2 concurrent training runs
 [subagents.train-agent-node1]
-command = "podman --remote --connection gpu-node-1 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
+start_command = "podman --remote --connection gpu-node-1 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
 lifecycle = "task"
 
 [subagents.train-agent-node2]
-command = "podman --remote --connection gpu-node-2 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
+start_command = "podman --remote --connection gpu-node-2 run --rm -i --device nvidia.com/gpu=0 --cpus=8 --memory=32g --network=host my-train-agent-image"
 lifecycle = "task"
 
 [agent]
@@ -331,7 +331,7 @@ For larger clusters, Kubernetes handles GPU scheduling natively. The `[subagents
 
 ```toml
 [subagents.train-agent]
-command   = "bash ~/.local/share/kelix/scripts/train-agent-k8s.sh"
+start_command = "bash ~/.local/share/kelix/scripts/train-agent-k8s.sh"
 lifecycle = "task"
 ```
 

@@ -19,15 +19,16 @@ max_concurrent_spawns = 2
 max_wall_time_secs    = 0   # no wall-clock limit
 
 [subagents.orchestrator]
-command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-orchestrator --agent opencode --system-prompt-file /prompts/orchestrator.md"
-lifecycle = "session"
+start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-orchestrator --agent opencode --system-prompt-file /prompts/orchestrator.md"
+stop_command = "podman stop kelix-{session_id}"
+lifecycle    = "session"
 
 [subagents.coding-agent]
-command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/coding-agent.md --system-prompt-file /prompts/coding-guardrails.md"
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/coding-agent.md --system-prompt-file /prompts/coding-guardrails.md"
 lifecycle = "task"
 
 [subagents.review-agent]
-command   = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/review-agent.md"
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $KELIX_HOME/examples/opencode-team/opencode.json:/workspace/opencode.json:ro --env OPENAI_API_KEY=$OPENAI_API_KEY --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY --env GOOGLE_GENERATIVE_AI_API_KEY=$GOOGLE_GENERATIVE_AI_API_KEY --env OPENROUTER_API_KEY=$OPENROUTER_API_KEY kelix:latest kelix-worker --agent opencode --system-prompt-file /prompts/review-agent.md"
 lifecycle = "task"
 
 [tools.shell]

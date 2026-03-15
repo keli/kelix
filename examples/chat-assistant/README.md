@@ -87,23 +87,23 @@ max_concurrent_spawns = 4    # set dynamically by adapter at session start
 max_wall_time_secs    = 0    # sessions are long-lived; no wall-clock limit
 
 [subagents.orchestrator]
-command   = "podman run --rm -i my-orchestrator-image"
+start_command = "podman run --rm -i my-orchestrator-image"
 lifecycle = "session"
 
 [subagents.research-agent]
-command   = "podman run --rm -i --cpus=1 --memory=2g my-research-agent-image"
+start_command = "podman run --rm -i --cpus=1 --memory=2g my-research-agent-image"
 lifecycle = "task"
 
 [subagents.coding-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-coding-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-coding-agent-image"
 lifecycle = "task"
 
 [subagents.review-agent]
-command   = "podman run --rm -i --cpus=1 --memory=2g my-review-agent-image"
+start_command = "podman run --rm -i --cpus=1 --memory=2g my-review-agent-image"
 lifecycle = "task"
 
 [subagents.knowledge-agent]
-command   = "podman run --rm -i my-knowledge-agent-image"
+start_command = "podman run --rm -i my-knowledge-agent-image"
 lifecycle = "task"
 volume    = "knowledge-vol"
 

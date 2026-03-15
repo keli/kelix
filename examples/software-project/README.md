@@ -288,41 +288,41 @@ max_concurrent_spawns = 6    # up to 6 parallel worker containers
 max_wall_time_secs    = 0    # not enforced
 
 [subagents.orchestrator]
-command   = "podman run --rm -i my-orchestrator-image"
+start_command = "podman run --rm -i my-orchestrator-image"
 lifecycle = "session"
 
 [subagents.planning-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-planning-agent-image"
 lifecycle = "task"
 
 [subagents.research-agent]
-command   = "podman run --rm -i --cpus=1 --memory=2g my-research-agent-image"
+start_command = "podman run --rm -i --cpus=1 --memory=2g my-research-agent-image"
 lifecycle = "task"
 
 [subagents.knowledge-agent]
-command   = "podman run --rm -i my-knowledge-agent-image"
+start_command = "podman run --rm -i my-knowledge-agent-image"
 lifecycle = "task"
 volume    = "knowledge-vol"   # persists across sessions
 
 [subagents.coding-agent]
-command   = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
+start_command = "podman run --rm -i --cpus=4 --memory=8g my-coding-agent-image"
 lifecycle = "task"
 
 [subagents.review-agent]
-command   = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
+start_command = "podman run --rm -i --cpus=2 --memory=4g my-review-agent-image"
 lifecycle = "task"
 
 [subagents.deploy-agent]
-command   = "podman run --rm -i --network=host --cpus=2 --memory=4g my-deploy-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=2 --memory=4g my-deploy-agent-image"
 lifecycle = "task"
 # --network=host for cloud API access and SSH
 
 [subagents.monitor-agent]
-command   = "podman run --rm -i --network=host --cpus=1 --memory=2g my-monitor-agent-image"
+start_command = "podman run --rm -i --network=host --cpus=1 --memory=2g my-monitor-agent-image"
 lifecycle = "task"
 
 [subagents.secret-agent]
-command   = "podman run --rm -i my-secret-agent-image"
+start_command = "podman run --rm -i my-secret-agent-image"
 lifecycle = "task"
 
 [tools.shell]

@@ -127,7 +127,7 @@ pub fn format_orchestrator_exit_detail(exit_code: i32, stderr_text: &str) -> Str
     if stderr_summary.is_empty() && report.is_none() {
         let mut detail = format!("exit code {exit_code} (no stderr output)");
         if append_mount_hint {
-            detail.push_str(". Check [subagents.orchestrator].command and its auth mounts.");
+            detail.push_str(". Check [subagents.orchestrator].start_command and its auth mounts.");
         }
         return detail;
     }
@@ -139,7 +139,7 @@ pub fn format_orchestrator_exit_detail(exit_code: i32, stderr_text: &str) -> Str
         .unwrap_or(stderr_summary.as_str());
     let mut detail = format!("exit code {exit_code}. stderr: {primary_message}");
     if append_mount_hint {
-        detail.push_str(". Check [subagents.orchestrator].command and its auth mounts.");
+        detail.push_str(". Check [subagents.orchestrator].start_command and its auth mounts.");
     }
     detail
 }
