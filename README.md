@@ -70,7 +70,7 @@ The Telegram adapter lets you drive a kelix session from a Telegram group chat.
 
 ### Setup
 
-1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token.
+1. Create a bot via [@BotFather](https://t.me/BotFather) and copy the token. Disable Group Privacy so the bot can receive all group messages: send `/setprivacy` to BotFather, select your bot, and choose **Disable**. 
 2. Start a kelix session locally with the session name you want to use:
 
 ```sh

@@ -69,7 +69,7 @@ jobs:
 
   update-homebrew-tap:
     name: Update Homebrew Tap Formula
-    if: github.ref_type == 'tag' && secrets.HOMEBREW_TAP_TOKEN != ''
+    if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
     env:
