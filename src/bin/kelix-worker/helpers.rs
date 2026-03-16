@@ -1,5 +1,4 @@
 use serde_json::Value;
-use std::process::Command;
 
 use super::types::{BlockedReason, FailureKind, WorkerResult, WorkerStatus};
 
@@ -15,17 +14,6 @@ pub fn emit_failure(task_id: &str, branch: &str, error: &str, kind: FailureKind)
         ..Default::default()
     };
     println!("{}", serde_json::to_string(&result).unwrap());
-}
-
-pub fn git_head_revision() -> String {
-    Command::new("git")
-        .args(["rev-parse", "HEAD"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default()
 }
 
 pub fn truncate(s: &str, max: usize) -> String {
@@ -93,8 +81,8 @@ pub fn parse_worker_result_value(v: Value, task_id: &str, branch: &str) -> Worke
         base_revision: v
             .get("base_revision")
             .and_then(|s| s.as_str())
-            .map(str::to_string)
-            .unwrap_or_else(git_head_revision),
+            .unwrap_or("")
+            .to_string(),
         summary: v
             .get("summary")
             .and_then(|s| s.as_str())

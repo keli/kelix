@@ -40,6 +40,7 @@ Output schema:\n\
 \"handover\":object}}\n\
 \n\
 Field rules:\n\
+- `base_revision` must be the VCS revision (e.g. git commit hash) your changes are based on; omit only if no VCS is in use.\n\
 - `failure_kind` is required when status is `failure`; omit otherwise.\n\
 - `blocked_reason` is required when status is `blocked`; omit otherwise.\n\
 - `handover` is required when status is `handover`; include `next_prompt`, `progress`, `remaining`.\n\
