@@ -288,11 +288,39 @@ pub async fn run(
             Some(spawned) = result_rx.recv() => {
                 let is_cancelled = spawned.result.process_error.as_deref() == Some("cancelled");
                 if !is_cancelled {
-                    let output = parse_worker_output(&spawned.result.raw_stdout);
+                    let subagent_name = dispatcher.subagent_name(&spawned.spawn_id).unwrap_or_default();
+                    let raw_output = parse_worker_output(&spawned.result.raw_stdout);
+
+                    // @chunk loop-runner/result-gate
+                    // Apply per-subagent result gate before delivering spawn_result.
+                    // The gate may intercept and modify exit_code/output (human confirm or agent review).
+                    let gate_subagent_config = config
+                        .approval
+                        .result_gates
+                        .get(&subagent_name)
+                        .and_then(|g| {
+                            if let crate::config::ResultGate::Agent(ref name) = g.gate {
+                                config.subagents.get(name.as_str())
+                            } else {
+                                None
+                            }
+                        });
+                    let outcome = crate::policy::gate::apply_result_gate_with_subagent(
+                        &config.approval,
+                        &subagent_name,
+                        spawned.result.exit_code,
+                        raw_output,
+                        frontend.as_ref(),
+                        gate_subagent_config,
+                        config.tools.shell.max_output_bytes,
+                    )
+                    .await?;
+                    // @end-chunk
+
                     let msg = CoreMessage::SpawnResult {
                         id: spawned.spawn_id.clone(),
-                        exit_code: spawned.result.exit_code,
-                        output,
+                        exit_code: outcome.exit_code,
+                        output: outcome.output,
                         truncated: if spawned.result.truncated { Some(true) } else { None },
                     };
                     write_message(&mut orch_stdin, &msg).await?;

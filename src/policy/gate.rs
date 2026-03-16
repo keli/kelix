@@ -1,9 +1,10 @@
 /// Approval gate routing.
-/// Routes approve requests to: human (TUI/stdin), agent (spawn), or auto (none).
-/// See CORE_PROTOCOL.md §4.2 and DESIGN.md §4.
-use crate::config::{ApprovalConfig, Gate};
+/// Routes shell approve requests and result gate interceptions.
+/// See CORE_PROTOCOL.md §4.2 and §7.1.
+use crate::config::{ApprovalConfig, ResultGate, ShellGate};
 use crate::error::CoreError;
 use crate::protocol::core_msg::{ApproveKind, ErrorCode};
+use crate::spawn::process_runner::{run_subagent_process, ProcessResult};
 use async_trait::async_trait;
 
 pub struct ApprovalRequest {
@@ -30,7 +31,7 @@ pub trait ApprovalUi: Send + Sync {
     async fn request_input(&self, message: &str) -> Result<String, CoreError>;
 }
 
-/// Route an approve request through the configured gate.
+/// Route a shell approve request through the configured shell gate.
 ///
 /// Returns `Err(CoreError::InvalidRequest)` if `options` is empty.
 /// The caller is responsible for recording the decision in the session log.
@@ -38,7 +39,6 @@ pub async fn decide(
     config: &ApprovalConfig,
     req: &ApprovalRequest,
     ui: &dyn ApprovalUi,
-    is_approval_agent_spawn: bool,
 ) -> Result<ApprovalDecision, CoreError> {
     if req.options.is_empty() {
         return Err(CoreError::InvalidRequest(
@@ -46,35 +46,12 @@ pub async fn decide(
         ));
     }
 
-    let gate = match req.kind {
-        ApproveKind::Shell => &config.shell_gate,
-        ApproveKind::Plan => &config.plan_gate,
-        ApproveKind::Merge => &config.merge_gate,
-    };
-
-    // Approval-agent spawn requests always go to human to prevent self-approval loops.
-    let effective_gate = if is_approval_agent_spawn {
-        &Gate::Human
-    } else {
-        gate
-    };
-
-    match effective_gate {
-        Gate::None => Ok(ApprovalDecision {
+    match &config.shell_gate {
+        ShellGate::None => Ok(ApprovalDecision {
             choice: req.options[0].clone(),
             decided_by: "auto".to_string(),
         }),
-        Gate::Human => {
-            let choice = ui.request_approval(req).await?;
-            Ok(ApprovalDecision {
-                choice,
-                decided_by: "human".to_string(),
-            })
-        }
-        Gate::Agent => {
-            // Spawn the approval-agent and use its response.
-            // For now, fall through to human.
-            // TODO: implement agent-gated approval
+        ShellGate::Human => {
             let choice = ui.request_approval(req).await?;
             Ok(ApprovalDecision {
                 choice,
@@ -83,6 +60,106 @@ pub async fn decide(
         }
     }
 }
+
+// @chunk policy/result-gate
+// Intercepts a spawn_result before delivery to the orchestrator.
+// Returns the (possibly modified) exit_code and output to deliver.
+// - None gate: pass through unchanged.
+// - Human gate: present to user; confirmed = original, denied = failure.
+// - Agent gate: spawn the gate subagent with the worker output as input;
+//   gate agent success = deliver original, non-zero = deliver failure.
+pub struct ResultGateOutcome {
+    pub exit_code: i32,
+    pub output: serde_json::Value,
+}
+
+/// Apply the result gate for a subagent before delivering spawn_result to the orchestrator.
+/// `gate_subagent_config` is the SubagentConfig for the gate agent (required for Agent gates).
+pub async fn apply_result_gate_with_subagent(
+    config: &ApprovalConfig,
+    subagent_name: &str,
+    exit_code: i32,
+    output: serde_json::Value,
+    ui: &dyn ApprovalUi,
+    gate_subagent_config: Option<&crate::config::SubagentConfig>,
+    max_output_bytes: usize,
+) -> Result<ResultGateOutcome, CoreError> {
+    let gate_config = match config.result_gates.get(subagent_name) {
+        Some(g) => g,
+        None => return Ok(ResultGateOutcome { exit_code, output }),
+    };
+
+    match &gate_config.gate {
+        ResultGate::None => Ok(ResultGateOutcome { exit_code, output }),
+
+        ResultGate::Human => {
+            let summary = output
+                .get("summary")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(no summary)");
+            let req = ApprovalRequest {
+                id: format!("result-gate-{subagent_name}"),
+                kind: ApproveKind::Shell,
+                message: format!("[{subagent_name}] {summary}"),
+                options: vec!["confirm".to_string(), "reject".to_string()],
+            };
+            let decision = ui.request_approval(&req).await?;
+            if decision == "confirm" {
+                Ok(ResultGateOutcome { exit_code, output })
+            } else {
+                Ok(ResultGateOutcome {
+                    exit_code: 1,
+                    output: serde_json::json!({
+                        "status": "failure",
+                        "failure_kind": "implementation",
+                        "error": format!("result rejected by human at result gate for {subagent_name}")
+                    }),
+                })
+            }
+        }
+
+        ResultGate::Agent(_gate_agent_name) => {
+            let subagent = gate_subagent_config.ok_or_else(|| {
+                CoreError::Config(format!(
+                    "result gate agent subagent config missing for {subagent_name}"
+                ))
+            })?;
+
+            let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+            // Immediately drop cancel_tx — we never cancel gate agent spawns.
+            drop(cancel_tx);
+
+            let gate_result: ProcessResult = run_subagent_process(
+                subagent,
+                &output,
+                None,
+                cancel_rx,
+                max_output_bytes,
+                10,
+            )
+            .await;
+
+            if gate_result.exit_code == 0 {
+                Ok(ResultGateOutcome { exit_code, output })
+            } else {
+                let gate_output = match serde_json::from_slice::<serde_json::Value>(&gate_result.raw_stdout) {
+                    Ok(v) => v,
+                    Err(_) => serde_json::Value::String(String::from_utf8_lossy(&gate_result.raw_stdout).to_string()),
+                };
+                Ok(ResultGateOutcome {
+                    exit_code: 1,
+                    output: serde_json::json!({
+                        "status": "failure",
+                        "failure_kind": "implementation",
+                        "error": format!("result gate rejected by agent"),
+                        "gate_output": gate_output,
+                    }),
+                })
+            }
+        }
+    }
+}
+// @end-chunk
 
 pub fn error_code_for(err: &CoreError) -> ErrorCode {
     match err {
@@ -98,7 +175,7 @@ pub fn error_code_for(err: &CoreError) -> ErrorCode {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ApprovalConfig, Gate};
+    use crate::config::{ApprovalConfig, ShellGate};
 
     struct AutoUi;
 
@@ -112,66 +189,113 @@ mod tests {
         }
     }
 
-    fn config_with_gate(gate: Gate) -> ApprovalConfig {
+    struct RejectUi;
+
+    #[async_trait]
+    impl ApprovalUi for RejectUi {
+        async fn request_approval(&self, req: &ApprovalRequest) -> Result<String, CoreError> {
+            Ok(req.options[1].clone()) // always pick second option (reject)
+        }
+        async fn request_input(&self, _message: &str) -> Result<String, CoreError> {
+            Ok("rejected".to_string())
+        }
+    }
+
+    fn config_with_shell_gate(gate: ShellGate) -> ApprovalConfig {
         ApprovalConfig {
-            shell_gate: gate.clone(),
-            plan_gate: gate.clone(),
-            merge_gate: gate,
-            agent: None,
+            shell_gate: gate,
+            result_gates: Default::default(),
         }
     }
 
     #[tokio::test]
-    async fn test_gate_none_auto_approves() {
-        let config = config_with_gate(Gate::None);
+    async fn test_shell_gate_none_auto_approves() {
+        let config = config_with_shell_gate(ShellGate::None);
         let req = ApprovalRequest {
             id: "req-001".to_string(),
             kind: ApproveKind::Shell,
             message: "run ls?".to_string(),
             options: vec!["yes".to_string(), "no".to_string()],
         };
-        let decision = decide(&config, &req, &AutoUi, false).await.unwrap();
+        let decision = decide(&config, &req, &AutoUi).await.unwrap();
         assert_eq!(decision.decided_by, "auto");
         assert_eq!(decision.choice, "yes");
     }
 
     #[tokio::test]
-    async fn test_gate_human_uses_ui() {
-        let config = config_with_gate(Gate::Human);
+    async fn test_shell_gate_human_uses_ui() {
+        let config = config_with_shell_gate(ShellGate::Human);
         let req = ApprovalRequest {
             id: "req-002".to_string(),
-            kind: ApproveKind::Merge,
-            message: "merge?".to_string(),
+            kind: ApproveKind::Shell,
+            message: "run git push?".to_string(),
             options: vec!["yes".to_string(), "no".to_string()],
         };
-        let decision = decide(&config, &req, &AutoUi, false).await.unwrap();
+        let decision = decide(&config, &req, &AutoUi).await.unwrap();
         assert_eq!(decision.decided_by, "human");
     }
 
     #[tokio::test]
     async fn test_empty_options_returns_error() {
-        let config = config_with_gate(Gate::None);
+        let config = config_with_shell_gate(ShellGate::None);
         let req = ApprovalRequest {
             id: "req-003".to_string(),
-            kind: ApproveKind::Plan,
-            message: "approve plan?".to_string(),
+            kind: ApproveKind::Shell,
+            message: "approve?".to_string(),
             options: vec![],
         };
-        let err = decide(&config, &req, &AutoUi, false).await.unwrap_err();
+        let err = decide(&config, &req, &AutoUi).await.unwrap_err();
         assert!(matches!(err, CoreError::InvalidRequest(_)));
     }
 
     #[tokio::test]
-    async fn test_approval_agent_spawn_always_goes_to_human() {
-        let config = config_with_gate(Gate::None); // would be auto
-        let req = ApprovalRequest {
-            id: "req-004".to_string(),
-            kind: ApproveKind::Shell,
-            message: "spawn approval-agent?".to_string(),
-            options: vec!["yes".to_string()],
-        };
-        // is_approval_agent_spawn = true should override Gate::None → human
-        let decision = decide(&config, &req, &AutoUi, true).await.unwrap();
-        assert_eq!(decision.decided_by, "human");
+    async fn test_result_gate_none_passthrough() {
+        let config = ApprovalConfig::default();
+        let output = serde_json::json!({"status": "success", "summary": "done"});
+        let outcome = apply_result_gate_with_subagent(
+            &config, "coding-agent", 0, output.clone(), &AutoUi, None, 65536,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.output, output);
+    }
+
+    #[tokio::test]
+    async fn test_result_gate_human_confirm_passthrough() {
+        let mut config = ApprovalConfig::default();
+        config.result_gates.insert(
+            "coding-agent".to_string(),
+            crate::config::ResultGateConfig {
+                gate: ResultGate::Human,
+            },
+        );
+        let output = serde_json::json!({"status": "success", "summary": "done"});
+        let outcome = apply_result_gate_with_subagent(
+            &config, "coding-agent", 0, output.clone(), &AutoUi, None, 65536,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.exit_code, 0);
+        assert_eq!(outcome.output, output);
+    }
+
+    #[tokio::test]
+    async fn test_result_gate_human_reject_becomes_failure() {
+        let mut config = ApprovalConfig::default();
+        config.result_gates.insert(
+            "coding-agent".to_string(),
+            crate::config::ResultGateConfig {
+                gate: ResultGate::Human,
+            },
+        );
+        let output = serde_json::json!({"status": "success", "summary": "done"});
+        let outcome = apply_result_gate_with_subagent(
+            &config, "coding-agent", 0, output, &RejectUi, None, 65536,
+        )
+        .await
+        .unwrap();
+        assert_eq!(outcome.exit_code, 1);
+        assert_eq!(outcome.output["status"], "failure");
     }
 }

@@ -78,6 +78,11 @@ impl SpawnTracker {
         }
     }
 
+    /// Return the subagent name for a given spawn_id, if it is in-flight.
+    pub fn subagent_name(&self, spawn_id: &str) -> Option<String> {
+        self.in_flight.get(spawn_id).map(|e| e.subagent.clone())
+    }
+
     /// Iterate over all in-flight spawn IDs.
     pub fn spawn_ids(&self) -> Vec<String> {
         self.in_flight.keys().cloned().collect()

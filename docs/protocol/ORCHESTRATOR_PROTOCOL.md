@@ -247,38 +247,43 @@ Chunk names follow `<module>/<concern>` in lowercase kebab-case and are unique w
 
 ## 6. Review and Integration Protocol
 
-Review and integration is per published task result and is not parallelized. While one task result is in review and integration (steps 2–7), other independent branches or task outputs may continue executing in worker spawns, as long as they do not depend on the result being integrated.
+Review and integration is per published task result. The orchestrator decides whether and how to invoke review, based on its configured subagents and the active session's deployment setup.
+
+If a `review-agent` subagent is configured, the orchestrator invokes it after each successful coding-agent result. The review-agent receives the diff (or equivalent artifact delta) and the original task prompt, and returns a standard worker result: `status: success` (approved) or `status: failure` (rejected, with blocking issues in `summary` or `error`).
+
+If `[approval.result_gates.coding-agent]` is configured in `kelix.toml`, core intercepts the coding-agent's `spawn_result` before the orchestrator receives it and routes it through the configured gate automatically (see CORE_PROTOCOL.md §7.1). In this case the orchestrator does not need to spawn a review-agent explicitly — it simply receives a success or failure result.
+
+Either approach produces the same orchestrator-visible outcome: a `spawn_result` with `exit_code: 0` (proceed to integration) or `exit_code: 1` (reject and retry).
 
 Per successful task result, in order:
 
-1. Coding-agent completes and exits with code 0.
-2. Orchestrator invokes review-agent with the published artifact diff (or equivalent review input defined by the bootstrap contract) and the original task prompt.
-3. **If review approved**: proceed to step 4.
-   **If review rejected**: send feedback to the producing worker role for a fix iteration (counts toward `MAX_FIX_ATTEMPTS`). Return to step 1.
-4. Compare the worker's `base_revision` with the current integrated revision.
-5. If the integrated revision advanced since the task started, check whether any tasks merged since `base_revision` overlap the task's `conflict_domains`.
-6. If overlapping conflict domains are detected: do not integrate directly. Route the task into a reconcile path by sending it back to a worker with the updated base state, or request a plan revision if the current plan is no longer valid.
-7. If no overlapping conflict domains are detected: integrate the approved result into the shared session workspace using the bootstrap-defined publication mechanism.
-8. Run `BUILD_CMD` and `TEST_CMD` against the integrated state (integration check).
-9. Run `LINT_CMD` and `FORMAT_CHECK_CMD` if defined.
-10. If all checks pass: mark the task `merged` and finalize the integration according to the session's publication contract.
-11. If any check fails: reject the branch, mark task failed, decide whether to retry or escalate.
+1. Coding-agent completes and exits with code 0 (either directly, or after passing a result gate).
+2. Compare the worker's `base_revision` with the current integrated revision.
+3. If the integrated revision advanced since the task started, check whether any tasks merged since `base_revision` overlap the task's `conflict_domains`.
+4. If overlapping conflict domains are detected: route the task into a reconcile path by sending it back to a worker with the updated base state, or request a plan revision if the current plan is no longer valid.
+5. If no overlapping conflict domains are detected: integrate the approved result into the shared session workspace using the bootstrap-defined publication mechanism.
+6. Run `BUILD_CMD` and `TEST_CMD` against the integrated state (integration check).
+7. Run `LINT_CMD` and `FORMAT_CHECK_CMD` if defined.
+8. If all checks pass: mark the task `merged` and finalize the integration according to the session's publication contract.
+9. If any check fails: reject the branch, mark task failed, decide whether to retry or escalate.
 
-The publication mechanism, including where integration and `git push` run, is defined by the active infra bootstrap contract for the deployment/example setup. Depending on that contract, publication may run through core shell execution on the host or inside an agent/container runtime. Credential and network requirements therefore follow the selected execution environment.
+A failed or rejected result counts toward `MAX_FIX_ATTEMPTS` for the task. The orchestrator sends feedback to the coding-agent for a fix iteration and returns to step 1.
+
+The publication mechanism, including where integration and `git push` run, is defined by the active infra bootstrap contract for the deployment/example setup.
 
 **Git-backed specialization.** In sessions where bootstrap established a shared git workflow:
 
-- Step 2 uses the task branch diff as the review input.
-- Step 4 compares the task's `base_revision` against the current `main` head (or the current integration head in a non-`main` workflow).
-- Step 7 typically runs `git fetch origin task/<task-id>` and prepares the branch for integration.
-- Step 10 typically squash-merges to `main` with message `feat(<task-id>): <summary>`.
+- Review input is the task branch diff.
+- Step 2 compares the task's `base_revision` against the current `main` head (or the current integration head in a non-`main` workflow).
+- Step 5 typically runs `git fetch origin task/<task-id>` and prepares the branch for integration.
+- Step 8 typically squash-merges to `main` with message `feat(<task-id>): <summary>`.
 - The commands above are representative of a common git-backed setup, not a requirement that execution occurs on the host via core shell.
 
 **Conflict handling:**
 
 - Publication conflicts (for example branch fast-forward failure, object lock contention, or merge-driver conflict): the orchestrator may perform the minimal reconciliation defined by the bootstrap contract. If that fails, it either dispatches a worker to prepare a corrected result or marks the task blocked and escalates.
-- Stale-base conflicts (the integration head advanced in overlapping `conflict_domains`): detected at steps 4-6. Route the task through a reconcile path instead of attempting direct integration.
-- Semantic conflicts that survive the stale-base check: detected by a failing build or test at step 8. Treat as a check failure.
+- Stale-base conflicts (the integration head advanced in overlapping `conflict_domains`): detected at steps 3-4. Route the task through a reconcile path instead of attempting direct integration.
+- Semantic conflicts that survive the stale-base check: detected by a failing build or test at step 6. Treat as a check failure.
 - Conflicts that require new code or config edits are not resolved by the orchestrator directly; they are routed back through a worker or surfaced as `blocked`.
 
 ## 7. Orchestrator Context Window and Handover
@@ -312,7 +317,7 @@ The handover payload follows the same structure as a worker handover (ORCHESTRAT
 2. Uses `session_start.handover.next_prompt` as its initial working context.
 3. Continues execution from where the predecessor left off.
 
-The successor does not re-run planning or re-send `plan_gate` for the active work item.
+The successor does not re-run planning for the active work item.
 
 **In-flight spawns during handover.** If the orchestrator exits with code 3 while spawns are in-flight, core buffers the pending `spawn_result` events and delivers them to the successor after it connects, exactly as in the crash recovery path. The successor should handle these buffered results before dispatching new work.
 

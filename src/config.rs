@@ -185,25 +185,65 @@ fn default_reflection_rounds() -> u32 {
     3
 }
 
+// @chunk config/approval
+// Approval policy: shell gate controls human/auto gating of shell commands.
+// Result gates intercept spawn_result events per subagent before delivery to
+// the orchestrator. See CORE_PROTOCOL.md §4.2 and §7.1.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct ApprovalConfig {
     #[serde(default)]
-    pub shell_gate: Gate,
+    pub shell_gate: ShellGate,
     #[serde(default)]
-    pub plan_gate: Gate,
-    #[serde(default)]
-    pub merge_gate: Gate,
-    pub agent: Option<String>,
+    pub result_gates: std::collections::HashMap<String, ResultGateConfig>,
 }
 
+/// Gate for shell command approval.
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
-pub enum Gate {
+pub enum ShellGate {
     #[default]
     Human,
-    Agent,
     None,
 }
+
+/// Per-subagent result gate configuration.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ResultGateConfig {
+    pub gate: ResultGate,
+}
+
+/// How a spawn_result is gated before delivery to the orchestrator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultGate {
+    /// Deliver immediately (default).
+    None,
+    /// Present to human via TUI; confirmed = deliver, denied = deliver as failure.
+    Human,
+    /// Spawn the named subagent with the worker output as input; its result decides.
+    Agent(String),
+}
+
+impl<'de> serde::Deserialize<'de> for ResultGate {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        if s == "none" {
+            Ok(ResultGate::None)
+        } else if s == "human" {
+            Ok(ResultGate::Human)
+        } else if let Some(name) = s.strip_prefix("agent:") {
+            if name.is_empty() {
+                Err(serde::de::Error::custom("agent name must not be empty in 'agent:<name>'"))
+            } else {
+                Ok(ResultGate::Agent(name.to_string()))
+            }
+        } else {
+            Err(serde::de::Error::custom(format!(
+                "invalid result gate '{s}': expected 'none', 'human', or 'agent:<name>'"
+            )))
+        }
+    }
+}
+// @end-chunk
 
 pub fn load(path: &Path) -> Result<Config, CoreError> {
     let contents = std::fs::read_to_string(path)
@@ -214,20 +254,18 @@ pub fn load(path: &Path) -> Result<Config, CoreError> {
 }
 
 fn validate(config: &Config) -> Result<(), CoreError> {
-    if config.approval.shell_gate == Gate::Agent
-        || config.approval.plan_gate == Gate::Agent
-        || config.approval.merge_gate == Gate::Agent
-    {
-        if config.approval.agent.is_none() {
-            return Err(CoreError::Config(
-                "approval.agent must be set when any gate is 'agent'".to_string(),
-            ));
-        }
-        let agent_name = config.approval.agent.as_ref().unwrap();
-        if !config.subagents.contains_key(agent_name) {
-            return Err(CoreError::Config(format!(
-                "approval.agent '{agent_name}' is not defined in [subagents]"
-            )));
+    for (subagent_name, gate_config) in &config.approval.result_gates {
+        if let ResultGate::Agent(agent_name) = &gate_config.gate {
+            if agent_name == subagent_name {
+                return Err(CoreError::Config(format!(
+                    "approval.result_gates.{subagent_name}: a subagent cannot be its own gate agent"
+                )));
+            }
+            if !config.subagents.contains_key(agent_name.as_str()) {
+                return Err(CoreError::Config(format!(
+                    "approval.result_gates.{subagent_name}: gate agent '{agent_name}' is not defined in [subagents]"
+                )));
+            }
         }
     }
     if config.adapter.autostart {
@@ -277,7 +315,7 @@ start_command = "echo worker"
     }
 
     #[test]
-    fn test_gate_agent_requires_agent_field() {
+    fn test_result_gate_agent_self_reference_rejected() {
         let mut f = NamedTempFile::new().unwrap();
         writeln!(
             f,
@@ -285,12 +323,81 @@ start_command = "echo worker"
 [subagents.orchestrator]
 start_command = "echo orch"
 
-[approval]
-shell_gate = "agent"
+[subagents.review-agent]
+start_command = "echo review"
+
+[approval.result_gates.review-agent]
+gate = "agent:review-agent"
 "#
         )
         .unwrap();
         assert!(load(f.path()).is_err());
+    }
+
+    #[test]
+    fn test_result_gate_agent_unknown_subagent_rejected() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[subagents.orchestrator]
+start_command = "echo orch"
+
+[subagents.coding-agent]
+start_command = "echo coding"
+
+[approval.result_gates.coding-agent]
+gate = "agent:nonexistent-reviewer"
+"#
+        )
+        .unwrap();
+        assert!(load(f.path()).is_err());
+    }
+
+    #[test]
+    fn test_result_gate_agent_valid() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[subagents.orchestrator]
+start_command = "echo orch"
+
+[subagents.coding-agent]
+start_command = "echo coding"
+
+[subagents.review-agent]
+start_command = "echo review"
+
+[approval.result_gates.coding-agent]
+gate = "agent:review-agent"
+"#
+        )
+        .unwrap();
+        let config = load(f.path()).unwrap();
+        let gate = &config.approval.result_gates["coding-agent"].gate;
+        assert_eq!(*gate, ResultGate::Agent("review-agent".to_string()));
+    }
+
+    #[test]
+    fn test_result_gate_human_valid() {
+        let mut f = NamedTempFile::new().unwrap();
+        writeln!(
+            f,
+            r#"
+[subagents.orchestrator]
+start_command = "echo orch"
+
+[subagents.coding-agent]
+start_command = "echo coding"
+
+[approval.result_gates.coding-agent]
+gate = "human"
+"#
+        )
+        .unwrap();
+        let config = load(f.path()).unwrap();
+        assert_eq!(config.approval.result_gates["coding-agent"].gate, ResultGate::Human);
     }
 
     #[test]
@@ -303,7 +410,8 @@ shell_gate = "agent"
         assert!(config.tools.shell.enabled);
         assert!(config.plan.plan_reviewers.is_empty());
         assert_eq!(config.plan.max_reflection_rounds, 3);
-        assert_eq!(config.approval.shell_gate, Gate::Human);
+        assert_eq!(config.approval.shell_gate, ShellGate::Human);
+        assert!(config.approval.result_gates.is_empty());
     }
 
     #[test]

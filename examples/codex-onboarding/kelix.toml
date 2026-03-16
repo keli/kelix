@@ -27,5 +27,3 @@ on_budget_exceeded = "abort"
 
 [approval]
 shell_gate = "human"
-plan_gate  = "human"
-merge_gate = "human"

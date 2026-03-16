@@ -124,8 +124,6 @@ impl ApprovalUi for HeadlessFrontend {
         }
         let kind_str = match req.kind {
             crate::protocol::core_msg::ApproveKind::Shell => "shell",
-            crate::protocol::core_msg::ApproveKind::Plan => "plan",
-            crate::protocol::core_msg::ApproveKind::Merge => "merge",
         };
         let event = AdapterOutboundMessage::ApprovalRequired {
             id: new_evt_id(),

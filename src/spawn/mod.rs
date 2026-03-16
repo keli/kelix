@@ -134,6 +134,11 @@ impl SpawnDispatcher {
         self.tracker.contains(spawn_id)
     }
 
+    /// Return the subagent name for an in-flight spawn, if known.
+    pub fn subagent_name(&self, spawn_id: &str) -> Option<String> {
+        self.tracker.subagent_name(spawn_id)
+    }
+
     /// Mark a spawn as completed (remove from tracker after result delivered).
     pub fn complete(&mut self, spawn_id: &str) {
         self.tracker.remove(spawn_id);

@@ -72,39 +72,35 @@ If kelix cannot start the worker (e.g. subagent not in config, budget exceeded),
 
 ### 4.2 `approve`
 
-Surface a decision for approval. kelix routes the request according to the gate configured for the given `kind` in `[approval]`: `human` blocks until the user responds via TUI; `agent` spawns the approval-agent and uses its response; `none` auto-approves immediately with `decided_by: "auto"`. Either way, execution blocks until a decision is returned.
+Surface a decision for approval. kelix routes the request according to the gate configured for `shell_gate` in `[approval]`: `human` blocks until the user responds via TUI; `none` auto-approves immediately with `decided_by: "auto"`. Either way, execution blocks until a decision is returned.
 
 `kind` values:
 - `shell`: a shell command requires approval (routed by `shell_gate`)
-- `plan`: a new task plan has been produced or revised; approval gates task dispatch or resume (routed by `plan_gate`)
-- `merge`: review-agent has approved a branch; approval gates squash merge to main (routed by `merge_gate`)
 
 ```json
 {
   "id": "req-002",
   "type": "approve",
-  "kind": "merge",
-  "message": "Merge task/001 into main?",
-  "options": ["yes", "no", "skip"]
+  "kind": "shell",
+  "message": "Run: git push origin task/001?",
+  "options": ["yes", "no"]
 }
 ```
 
-Response (same shape regardless of whether the decision came from a human, approval-agent, or auto):
+Response:
 
 ```json
 {
   "id": "req-002",
   "type": "approve_result",
   "choice": "yes",
-  "decided_by": "human | approval-agent | auto"
+  "decided_by": "human | auto"
 }
 ```
 
 `options` must be a non-empty array of strings. If `options` is missing or empty, kelix returns an `error` response with code `invalid_request` and does not surface the approval.
 
-`blocked` requests (free-form human input required) are always routed to the human, never to the approval-agent. All approval decisions — human, agent, or auto — are recorded in the session log.
-
-If a gate is set to `agent` and the request being approved is itself a spawn of the approval-agent, kelix does not route the approval to the approval-agent. Approval-agent spawn approval is always escalated to the human. The `decided_by` field in `approve_result` will be `human` in this case.
+`blocked` requests (free-form human input required) are always routed to the human. All approval decisions are recorded in the session log.
 
 ### 4.3 `config_get`
 
@@ -379,12 +375,33 @@ All repo configuration, credentials, working directories, and concrete infra des
 kelix enforces policy on all requests:
 
 - `spawn`: subagent name must be in `[subagents]` config. Unknown subagents are rejected.
-- `approve` routing: each `approve` request carries a `kind` field (`shell`, `plan`, `merge`). kelix routes it according to the matching gate in `[approval]` config (`shell_gate`, `plan_gate`, `merge_gate`). The approval-agent (if configured) may decide `agent`-gated requests, but never `blocked` requests. Spawn requests for the approval-agent are always approved by the human, never by the approval-agent itself. This prevents a self-approval loop.
+- `approve` routing: the only supported `kind` is `shell`. kelix routes it according to `shell_gate` in `[approval]` config (`human` or `none`).
+- Result gates: after a worker exits, if `[approval.result_gates.<subagent-name>]` is configured, kelix intercepts the `spawn_result` before delivering it to the orchestrator and routes it through the configured gate. See §7.1.
 - Budget: if cumulative token usage, as tracked by kelix from worker `output` payloads that include a `usage` field, exceeds `[budget].max_tokens`, kelix rejects further `spawn` requests with a `budget_exceeded` error response and sends `session_abort`. If `[budget].on_budget_exceeded` is `reject_spawn`, kelix returns an error response to the spawn but does not send `session_abort`; the orchestrator may handle the refusal and continue non-spawn operations (e.g. `complete` or `blocked`). After sending `session_abort`, all subsequent `spawn` requests are rejected immediately regardless of message ordering.
 - Spawn limit: if `max_spawns` is non-zero and the total number of acknowledged spawns reaches it, kelix rejects further `spawn` requests with a `spawn_limit_exceeded` error and sends `session_abort`.
 - Wall-clock limit: if `max_wall_time_secs` is non-zero and the session has been running for that duration, kelix sends `session_abort` with reason `wall_time_exceeded` and ignores further requests.
 
 Policy violations return an `error` response and do not terminate the session; the orchestrator decides how to handle them.
+
+### 7.1 Result gates
+
+Result gates let the user configure whether a subagent's output must pass an approval step before the orchestrator receives it. This is the mechanism for wiring review-agents, human checkpoints, or other approval subagents into the spawn result flow without baking those concepts into the core protocol.
+
+Configuration (in `kelix.toml`):
+
+```toml
+[approval.result_gates.coding-agent]
+gate = "agent:review-agent"   # human | agent:<subagent-name> | none (default)
+```
+
+Gate values:
+- `none` (default): `spawn_result` is delivered to the orchestrator immediately.
+- `human`: core intercepts the result, presents the worker's summary and output to the user via TUI, and waits for confirmation. On confirm: delivers the original `spawn_result`. On deny: delivers a `spawn_result` with `exit_code: 1` and a failure output indicating the result was rejected by the user.
+- `agent:<name>`: core intercepts the result, spawns the named subagent with the original worker output as its stdin input, and waits for that subagent to exit. If the gate agent exits with code 0 (success): delivers the original `spawn_result`. If the gate agent exits with non-zero: delivers a `spawn_result` with `exit_code: 1` whose output includes the gate agent's output as the error context.
+
+The gate agent receives the intercepted `spawn_result` output as its stdin. It must produce a standard worker result (see ORCHESTRATOR_PROTOCOL.md §5). The orchestrator does not see the gate agent spawn — it is handled entirely by core.
+
+Cycle prevention: a subagent may not be its own gate agent. If `[approval.result_gates.X]` sets `gate = "agent:X"`, kelix rejects the config at startup with a descriptive error. Gate agent spawns are not themselves subject to result gate interception, preventing chains.
 
 ### Shell command execution
 

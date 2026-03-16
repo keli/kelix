@@ -4,7 +4,7 @@ use crate::config::Config;
 use crate::error::CoreError;
 use crate::frontend::Frontend;
 use crate::policy::gate::{self, ApprovalRequest};
-use crate::protocol::core_msg::{ApproveKind, CoreMessage, OrchestratorRequest};
+use crate::protocol::core_msg::{CoreMessage, OrchestratorRequest};
 use crate::session::state::Session;
 use crate::spawn::SpawnDispatcher;
 
@@ -66,14 +66,6 @@ pub async fn handle_request(
             message,
             options,
         } => {
-            let is_approval_agent_spawn = matches!(kind, ApproveKind::Shell)
-                && config
-                    .approval
-                    .agent
-                    .as_deref()
-                    .map(|a| message.contains(a))
-                    .unwrap_or(false);
-
             let req = ApprovalRequest {
                 id: id.clone(),
                 kind: kind.clone(),
@@ -81,7 +73,7 @@ pub async fn handle_request(
                 options: options.clone(),
             };
 
-            match gate::decide(&config.approval, &req, frontend, is_approval_agent_spawn).await {
+            match gate::decide(&config.approval, &req, frontend).await {
                 Ok(decision) => {
                     let msg = CoreMessage::ApproveResult {
                         id: id.clone(),

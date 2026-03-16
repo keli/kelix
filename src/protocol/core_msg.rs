@@ -115,8 +115,6 @@ impl OrchestratorRequest {
 #[serde(rename_all = "snake_case")]
 pub enum ApproveKind {
     Shell,
-    Plan,
-    Merge,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -257,14 +255,14 @@ mod tests {
     fn test_approve_round_trip() {
         let msg = OrchestratorRequest::Approve {
             id: "req-002".to_string(),
-            kind: ApproveKind::Merge,
-            message: "Merge task/001?".to_string(),
+            kind: ApproveKind::Shell,
+            message: "Run: git push origin task/001?".to_string(),
             options: vec!["yes".to_string(), "no".to_string()],
         };
         let json = serde_json::to_string(&msg).unwrap();
         let parsed: OrchestratorRequest = serde_json::from_str(&json).unwrap();
         if let OrchestratorRequest::Approve { kind, options, .. } = parsed {
-            assert_eq!(kind, ApproveKind::Merge);
+            assert_eq!(kind, ApproveKind::Shell);
             assert_eq!(options.len(), 2);
         } else {
             panic!("wrong variant");

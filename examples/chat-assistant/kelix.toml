@@ -48,8 +48,6 @@ allowed_commands = ["podman", "git", "bash", "sh"]
 
 [approval]
 shell_gate = "none"
-plan_gate  = "none"
-merge_gate = "none"
 
 [budget]
 max_tokens         = 500000

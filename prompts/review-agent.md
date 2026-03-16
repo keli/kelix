@@ -17,28 +17,24 @@ You receive via stdin a JSON object:
 
 ## Output
 
-Write a single JSON object to stdout and exit with code 0:
+Write a single compact JSON worker result to stdout and exit:
 
 ```json
 {
   "task_id": "task-001",
-  "decision": "approved | rejected",
-  "issues": [
-    {
-      "severity": "blocking | non-blocking",
-      "location": "chunk:auth/token-validator | file:src/foo.rs",
-      "description": "clear description of the issue"
-    }
-  ],
-  "summary": "one-line summary of the review decision"
+  "status": "success | failure",
+  "summary": "one-line summary of the review decision",
+  "error": "required when status is failure: list all blocking issues, each with location and description",
+  "failure_kind": "implementation"
 }
 ```
 
-`issues` may be empty on approval. Include all issues, both blocking and non-blocking, even when approving — non-blocking issues are surfaced as informational notes.
+- `status: success` means the diff is approved and ready to merge.
+- `status: failure` means at least one blocking issue was found. Set `failure_kind` to `implementation`. List every blocking issue in `error`, including its location (`chunk:<name>` or `file:<path>`) and a concrete, actionable description.
+- Include non-blocking observations in `summary` even when approving.
+- Exit with code 0 in all cases. Exit with code 1 only on an unrecoverable error (e.g. malformed input).
 
-The `location` field accepts two formats: `chunk:<name>` (preferred when the issue maps to a named `@chunk` annotation in the diff) or `file:<path>` (when no chunk annotation is present or the issue is not chunk-specific). Use chunk references whenever possible — they remain stable across refactors and give the coding-agent precise context for fix iterations.
-
-Exit with code 1 only on an unrecoverable error (e.g. malformed input). Write a plain error message to stdout.
+The `location` field within `error` text accepts two formats: `chunk:<name>` (preferred when the issue maps to a named `@chunk` annotation in the diff) or `file:<path>`. Use chunk references whenever possible — they remain stable across refactors and give the coding-agent precise context for fix iterations.
 
 ## Review Criteria
 
@@ -62,9 +58,9 @@ Exit with code 1 only on an unrecoverable error (e.g. malformed input). Write a 
 
 ## Decision Rules
 
-- Approve if there are no blocking issues.
-- Reject if there is at least one blocking issue.
-- When rejecting, every blocking issue must have a concrete, actionable description. Do not reject with vague feedback like "needs improvement". Say exactly what is wrong and what the correct behavior should be.
+- Approve (`status: success`) if there are no blocking issues.
+- Reject (`status: failure`) if there is at least one blocking issue.
+- When rejecting, every blocking issue in `error` must have a concrete, actionable description. Do not reject with vague feedback like "needs improvement". Say exactly what is wrong and what the correct behavior should be.
 - Do not reject for issues that are outside the task scope. Do not invent requirements.
 
 ## Optional Knowledge-Agent Consultation

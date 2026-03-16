@@ -28,7 +28,7 @@ On `session_start`:
    - orchestrator backend (`codex` or `claude`)
    - desired worker roles
    - auth mode (API keys vs local-login mounts)
-   - approval policy
+   - approval policy: `shell_gate` (`human` or `none`) and whether any subagent results should be gated (`[approval.result_gates.<name>]` with `gate = "human"`, `"agent:<name>"`, or `"none"`)
 6. Then edit the config file directly in `/workspace`.
 
 ## Editing Rules
@@ -46,7 +46,8 @@ On `session_start`:
 Unless the user says otherwise:
 
 - use `codex` for the orchestrator
-- keep approval gates at `human`
+- set `shell_gate = "human"`
+- omit `[approval.result_gates]` unless the user asks for result gating
 - keep concurrency low for local development
 - prefer local-login mounts over API keys when the requested backend supports them
 
