@@ -212,24 +212,20 @@ fn resolve_adapter_launch(
     }
 }
 
-fn adapter_pid_path(config_path: &std::path::Path, provider_name: &str) -> PathBuf {
-    let base = config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    base.join(".kelix").join(format!(
-        "adapter-autostart-{}.pid",
-        sanitize_key(provider_name)
-    ))
+fn adapter_pid_path(_config_path: &std::path::Path, provider_name: &str) -> PathBuf {
+    global_kelix_dir()
+        .join(format!("adapter-autostart-{}.pid", sanitize_key(provider_name)))
 }
 
-fn adapter_ready_file_path(config_path: &std::path::Path, provider_name: &str) -> PathBuf {
-    let base = config_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    base.join(".kelix").join(format!(
-        "adapter-ready-{}.flag",
-        sanitize_key(provider_name)
-    ))
+fn adapter_ready_file_path(_config_path: &std::path::Path, provider_name: &str) -> PathBuf {
+    global_kelix_dir()
+        .join(format!("adapter-ready-{}.flag", sanitize_key(provider_name)))
+}
+
+fn global_kelix_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".kelix")
 }
 
 fn read_adapter_pid(path: &std::path::Path) -> Result<Option<u32>> {
