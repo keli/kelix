@@ -17,6 +17,7 @@ pub fn run_claude_session(system_prompt: &str, log_file: Option<&Path>) {
     let mut stdout = io::stdout();
     let mut line = String::new();
     let mut session_id: Option<String> = None;
+    let mut kelix_session_id: Option<String> = None;
     let mut is_first_turn = true;
 
     loop {
@@ -35,6 +36,15 @@ pub fn run_claude_session(system_prompt: &str, log_file: Option<&Path>) {
             continue;
         }
 
+        // On the first turn, extract the kelix session_id from session_start and
+        // restore any persisted Claude session_id so --resume is passed on recovery.
+        if is_first_turn {
+            if let Some(kid) = super::session_state::extract_kelix_session_id(request) {
+                session_id = super::session_state::load_backend_session_id(&kid, "claude");
+                kelix_session_id = Some(kid);
+            }
+        }
+
         let prompt = build_claude_prompt(system_prompt, request, is_first_turn);
         is_first_turn = false;
 
@@ -48,7 +58,12 @@ pub fn run_claude_session(system_prompt: &str, log_file: Option<&Path>) {
         };
 
         if session_id.is_none() {
-            session_id = turn.session_id;
+            if let Some(new_id) = turn.session_id {
+                if let Some(kid) = &kelix_session_id {
+                    super::session_state::save_backend_session_id(kid, "claude", &new_id);
+                }
+                session_id = Some(new_id);
+            }
         }
 
         if writeln!(stdout, "{}", turn.response).is_err() || stdout.flush().is_err() {

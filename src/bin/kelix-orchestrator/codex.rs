@@ -17,6 +17,8 @@ pub fn run_codex_session(system_prompt: &str, log_file: Option<&Path>) {
     let mut stdout = io::stdout();
     let mut line = String::new();
     let mut session_id: Option<String> = None;
+    let mut kelix_session_id: Option<String> = None;
+    let mut first_turn = true;
 
     loop {
         line.clear();
@@ -34,7 +36,20 @@ pub fn run_codex_session(system_prompt: &str, log_file: Option<&Path>) {
             continue;
         }
 
+        // On the first message (session_start), extract the kelix session_id and
+        // restore any persisted Codex thread_id so resume is passed on recovery.
+        if first_turn {
+            first_turn = false;
+            if let Some(kid) = super::session_state::extract_kelix_session_id(request) {
+                session_id = super::session_state::load_backend_session_id(&kid, "codex");
+                kelix_session_id = Some(kid);
+            }
+        }
+
+        // session_id.is_none() is true only for a fresh (non-resumed) first turn,
+        // which is the original condition for including the full system prompt.
         let prompt = build_codex_prompt(system_prompt, request, session_id.is_none());
+
         let turn = match run_codex_turn(session_id.as_deref(), &prompt, log_file) {
             Ok(turn) => turn,
             Err(e) => {
@@ -45,7 +60,12 @@ pub fn run_codex_session(system_prompt: &str, log_file: Option<&Path>) {
         };
 
         if session_id.is_none() {
-            session_id = turn.session_id;
+            if let Some(new_id) = turn.session_id {
+                if let Some(kid) = &kelix_session_id {
+                    super::session_state::save_backend_session_id(kid, "codex", &new_id);
+                }
+                session_id = Some(new_id);
+            }
         }
 
         if writeln!(stdout, "{}", turn.response).is_err() || stdout.flush().is_err() {

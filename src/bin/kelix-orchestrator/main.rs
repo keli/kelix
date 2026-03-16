@@ -15,6 +15,7 @@ mod log;
 mod normalize;
 mod opencode;
 mod runtime_contract;
+mod session_state;
 
 use clap::{Parser, ValueEnum};
 
