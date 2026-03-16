@@ -253,21 +253,16 @@ fn write_adapter_pid(path: &std::path::Path, pid: u32) -> Result<()> {
 }
 
 fn is_process_running(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    use nix::sys::signal;
+    use nix::unistd::Pid;
+    signal::kill(Pid::from_raw(pid as i32), None).is_ok()
 }
 
 fn stop_process(pid: u32) -> Result<()> {
-    let status = std::process::Command::new("kill")
-        .arg("-TERM")
-        .arg(pid.to_string())
-        .status()
-        .context("failed to send TERM to existing adapter process")?;
-    if !status.success() {
+    use nix::sys::signal::{self, Signal};
+    use nix::unistd::Pid;
+    let nix_pid = Pid::from_raw(pid as i32);
+    if signal::kill(nix_pid, Signal::SIGTERM).is_err() {
         return Ok(());
     }
 
@@ -278,10 +273,7 @@ fn stop_process(pid: u32) -> Result<()> {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    let _ = std::process::Command::new("kill")
-        .arg("-KILL")
-        .arg(pid.to_string())
-        .status();
+    let _ = signal::kill(nix_pid, Signal::SIGKILL);
     Ok(())
 }
 
