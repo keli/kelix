@@ -66,6 +66,14 @@ RUN chmod +x /usr/local/bin/weave \
 COPY docker/entrypoint.sh /usr/local/bin/agent-entrypoint.sh
 RUN chmod +x /usr/local/bin/agent-entrypoint.sh
 
+# Install Rust stable toolchain via rustup.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --no-modify-path --default-toolchain stable --profile minimal \
+    && chmod -R a+w /usr/local/rustup /usr/local/cargo
+
 # Non-root user for safety
 RUN useradd -m -u 1000 agent
 USER agent
