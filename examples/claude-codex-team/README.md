@@ -1,9 +1,9 @@
-# Claude + Codex Team
+# Codex + Claude Team
 
 Local profile:
 
-- `Claude Code` as orchestrator
-- `Codex` as coding-agent
+- `Codex` as orchestrator
+- `Claude Code` as coding-agent
 - `Claude Code` as review-agent
 
 ## Prerequisites
@@ -44,8 +44,9 @@ Usually you only need to change:
 - whether to use API keys or local-login mounts
 - enabled subagents
 - approval policy
+- adapter provider and `autostart` (set `autostart = true` to enable headless mode via Telegram)
 
-Use `Codex` or `Claude Code` directly to adapt the file for your machine.
+Use `Claude Code` or `Codex` directly to adapt the file for your machine.
 
 Suggested prompt:
 
@@ -53,8 +54,8 @@ Suggested prompt:
 Modify examples/claude-codex-team/kelix.toml for my machine.
 
 Keep:
-- Claude Code as orchestrator
-- Codex as coding-agent
+- Codex as orchestrator
+- Claude Code as coding-agent
 - Claude Code as review-agent
 
 Requirements:
@@ -72,8 +73,8 @@ Before editing, inspect:
 
 If startup fails, check in this order:
 
-1. `Codex` works on the host by itself.
-2. `Claude Code` works on the host by itself.
+1. `Claude Code` works on the host by itself.
+2. `Codex` works on the host by itself.
 3. The auth paths in `kelix.toml` actually exist.
 4. `podman` can run `kelix:latest`.
 
@@ -88,7 +89,7 @@ For detailed runtime diagnostics, enable debug mode:
 or:
 
 ```sh
-KELIX_DEBUG=1 ./target/release/kelix start examples/claude-codex-team/kelix.toml --prompt "Help me onboard this workspace"
+./target/release/kelix start examples/claude-codex-team/kelix.toml --prompt "Help me onboard this workspace" --debug
 ```
 
 Debug mode prints verbose orchestrator I/O and process diagnostics to stderr.

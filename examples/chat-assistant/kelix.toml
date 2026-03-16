@@ -4,12 +4,15 @@
 # on-demand worker subagents for complex tasks.
 #
 # Usage:
-#   kelix start examples/chat-assistant/kelix.toml --headless
+#   kelix start examples/chat-assistant/kelix.toml --prompt "your task"
+#
+# With autostart=true the adapter launches automatically alongside the session.
 #
 # Prerequisites:
 #   - podman installed and daemon running
 #   - kelix:latest image built: ./docker/build.sh
-#   - Claude authentication configured (OAuth token or API key)
+#   - Codex authentication configured (~/.codex)
+#   - TELEGRAM_BOT_TOKEN set in the environment
 #   - /prompts is bundled in the image; optionally mount /prompts to override defaults.
 
 [agent]
@@ -24,34 +27,18 @@ provider = "telegram"
 [adapter.providers.telegram]
 kind = "builtin"
 
-# Claude orchestrator (Option A — OAuth token)
 [subagents.orchestrator]
-start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
+start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-orchestrator --agent codex --system-prompt-file /prompts/orchestrator.md"
 stop_command = "podman stop kelix-{session_id}"
 lifecycle    = "session"
 
-# Claude orchestrator (Option B — API key)
-# [subagents.orchestrator]
-# start_command = "podman run --rm -i --name kelix-{session_id} -w /workspace -v $PWD:/workspace:rw --env ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY kelix:latest kelix-orchestrator --agent claude --system-prompt-file /prompts/orchestrator.md"
-# stop_command  = "podman stop kelix-{session_id}"
-# lifecycle     = "session"
-
 [subagents.research-agent]
-start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/research-agent.md"
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.codex:/auth/codex:rw kelix:latest kelix-worker --agent codex --system-prompt-file /prompts/research-agent.md"
 lifecycle = "task"
 
 [subagents.coding-agent]
-start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/coding-agent.md"
+start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.gitconfig:/auth/home/.gitconfig:ro -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/coding-agent.md --system-prompt-file /prompts/coding-guardrails.md"
 lifecycle = "task"
-
-[subagents.review-agent]
-start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/review-agent.md"
-lifecycle = "task"
-
-[subagents.knowledge-agent]
-start_command = "podman run --rm -i -w /workspace -v $PWD:/workspace:rw -v $HOME/.claude:/auth/claude:rw -v $HOME/.claude.json:/auth/claude.json:rw --env CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN kelix:latest kelix-worker --agent claude --system-prompt-file /prompts/knowledge-agent.md"
-lifecycle = "task"
-volume    = "knowledge-vol"
 
 [tools.shell]
 enabled          = true
@@ -62,7 +49,7 @@ allowed_commands = ["podman", "git", "bash", "sh"]
 [approval]
 shell_gate = "none"
 plan_gate  = "none"
-merge_gate = "human"
+merge_gate = "none"
 
 [budget]
 max_tokens         = 500000

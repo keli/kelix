@@ -1,99 +1,90 @@
 # Example: Telegram Chat Assistant
 
 Status: Example
-Last updated: March 15, 2026
+Last updated: March 16, 2026
 
 ## Overview
 
-This profile is for running a Telegram-connected kelix assistant with the current built-in adapter.
+This profile runs a Telegram-connected kelix assistant: Codex as orchestrator,
+Claude as coding-agent, with the Telegram adapter auto-started alongside the session.
 
-Current adapter scope in this repository:
+Current adapter scope:
 
 - Provider support: Telegram only.
-- Adapter runtime: runs on the host process (not inside kelix core).
-- Session model: adapter binds Telegram groups to **existing** kelix sessions by group title.
-
-## What This Example Includes
-
-- `kelix.toml`: core/subagent runtime profile for chat-assistant style workloads.
-- Top-level `[adapter]` provider selection + `[adapter.providers.<name>]` registry.
-
-`examples/chat-assistant/adapter.toml` from earlier drafts is not part of the active runtime path.
+- Session model: adapter binds Telegram groups to kelix sessions by group title.
+- Adapter state: `~/.kelix/adapters/telegram-state.json`
 
 ## Prerequisites
 
 - `podman` installed and daemon running
-- `kelix` binary available in your `PATH`
-- `kelix:latest` image built locally (for example `./docker/build.sh`)
-- Claude auth configured (OAuth token or API key)
-- Telegram bot token (`TELEGRAM_BOT_TOKEN`)
+- `kelix` binary built (`cargo build --release`)
+- `kelix:latest` image built (`./docker/build.sh`)
+- Codex auth configured (`~/.codex`)
+- Claude auth configured (`~/.claude`, `~/.claude.json`, `CLAUDE_CODE_OAUTH_TOKEN`)
+- `TELEGRAM_BOT_TOKEN` set in the environment
+- `~/.gitconfig` with `user.name` and `user.email` set
 
-## Authentication Setup
+## Start
 
-Option A (OAuth token):
-
-```bash
-export CLAUDE_CODE_OAUTH_TOKEN=...
-```
-
-Option B (API key):
-
-```bash
-export ANTHROPIC_API_KEY=...
-```
-
-## Run Flow (Current Implementation)
-
-1. Start gateway (adapter connects to this WebSocket endpoint):
-
-```bash
-kelix gateway --listen-addr 127.0.0.1:9000
-```
-
-2. Create a session with an explicit ID (this ID must match Telegram group title):
-
-```bash
-kelix core start examples/chat-assistant/kelix.toml --session_id my-group
-```
-
-3. Start adapter on host:
-
-```bash
+```sh
 export TELEGRAM_BOT_TOKEN=...
-kelix adapter --provider telegram --gateway-url ws://127.0.0.1:9000
+export CLAUDE_CODE_OAUTH_TOKEN=...
+./target/release/kelix start examples/chat-assistant/kelix.toml --session my-group
 ```
 
-4. In Telegram:
+`kelix start` automatically:
+1. Starts a gateway (if not already running) at `127.0.0.1:9000`.
+2. Launches the Telegram adapter (`adapter.autostart = true`).
+3. Opens the TUI for the session.
 
-- Add the bot into a `group` or `supergroup`.
-- Set group title to `my-group` (exact match to session ID).
-- Send `/rebind` once, or just send a normal message to trigger auto-bind.
+The session ID must match the Telegram group title for auto-binding to work.
 
-## Telegram Command Surface
+## Telegram Bot Setup
 
-- Any text message: forwarded to bound session.
+1. Create a bot via [@BotFather](https://t.me/botfather) and get a token.
+2. Add the bot to a group or supergroup.
+3. Set the group title to match your `--session` value.
+4. On first run the adapter prints a claim code to stderr. Send `/claim <code>` to the bot
+   to whitelist yourself. Until claimed, session messages are dropped.
+
+## Telegram Commands
+
+- Any plain text message (or `@botname <text>`): forwarded to the bound session.
 - `/ask <text>` or `/run <text>`: explicit prompt.
-- `@bot <text>`: mention-style prompt.
-- `/status`: show current binding.
-- `/rebind`: retry title-based binding.
-- `/approve <request_id> <choice|index>`: answer approval request.
+- `/status`: show the current session binding for this group.
+- `/rebind`: retry title-based binding (use after renaming the group or restarting).
+- `/approve <request_id> <choice|index>`: answer an approval request.
+- `/claim <code>`: whitelist yourself on first run.
 - `/help`: show commands.
 
 Only text messages are forwarded. Media messages are ignored.
 
-## Behavioral Notes
+## Adjust The Config
 
-- The adapter does not auto-create sessions on first group message.
-- The adapter does not read per-group subagent config from TOML.
-- Group-to-session mapping is persisted in adapter state (`~/.kelix/adapters/telegram-state.json` by default).
-- Binding uses session existence checks via `kelix list --json`.
-- `adapter.autostart=true` can be used to auto-launch the selected provider when running `kelix start <config>`.
+Start from [kelix.toml](./kelix.toml).
 
-## Difference From OpenClaw-Style Usage
+Common changes:
 
-Compared to common OpenClaw workflows, this example is intentionally narrower:
+- auth mounts (swap codex/claude paths or use API keys via env vars)
+- `max_concurrent_spawns` (raise for more parallel tasks)
+- `budget.max_tokens` / `on_budget_exceeded`
+- `adapter.autostart` (set to `false` to manage the adapter separately)
 
-- Telegram only (no Slack/Discord adapters in-tree yet).
-- Explicit pre-created kelix sessions instead of automatic per-group provisioning.
-- Session binding by group title/session ID, not by adapter-managed workspace abstraction.
-- No active adapter-level scheduling/capacity policy config in this example.
+## Troubleshooting
+
+If startup fails, check in this order:
+
+1. `Codex` works on the host by itself.
+2. `Claude Code` works on the host by itself.
+3. `TELEGRAM_BOT_TOKEN` is set and valid.
+4. The auth paths in `kelix.toml` exist on your machine.
+5. `podman` can run `kelix:latest`.
+
+If the adapter starts but messages are dropped, you have not claimed the bot yet.
+Check stderr for the claim code and send `/claim <code>` to the bot.
+
+For detailed diagnostics:
+
+```sh
+./target/release/kelix start examples/chat-assistant/kelix.toml --session my-group --debug
+```
