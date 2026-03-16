@@ -866,30 +866,14 @@ async fn telegram_api<T: for<'de> Deserialize<'de>>(
     payload: &serde_json::Value,
 ) -> Result<T> {
     let url = format!("https://api.telegram.org/bot{token}/{method}");
-    let output = Command::new("curl")
-        .arg("--silent")
-        .arg("--show-error")
-        .arg("--fail")
-        .arg("-X")
-        .arg("POST")
-        .arg(&url)
-        .arg("-H")
-        .arg("Content-Type: application/json")
-        .arg("-d")
-        .arg(payload.to_string())
-        .output()
+    let response: TelegramResponse<T> = reqwest::Client::new()
+        .post(&url)
+        .json(payload)
+        .send()
         .await
-        .with_context(|| format!("failed to execute curl for Telegram method {method}"))?;
-
-    if !output.status.success() {
-        anyhow::bail!(
-            "Telegram API call {} failed: {}",
-            method,
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let response: TelegramResponse<T> = serde_json::from_slice(&output.stdout)
+        .with_context(|| format!("failed to send request for Telegram method {method}"))?
+        .json()
+        .await
         .with_context(|| format!("failed to parse Telegram response for {method}"))?;
     if !response.ok {
         let desc = response
