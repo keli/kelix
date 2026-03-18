@@ -294,17 +294,24 @@ pub async fn run(
                     // @chunk loop-runner/result-gate
                     // Apply per-subagent result gate before delivering spawn_result.
                     // The gate may intercept and modify exit_code/output (human confirm or agent review).
-                    let gate_subagent_config = config
+                    // For agent gates, emit worker_started/worker_finished so the session and
+                    // frontend can observe the gate agent lifecycle.
+                    let gate_agent_info = config
                         .approval
                         .result_gates
                         .get(&subagent_name)
                         .and_then(|g| {
                             if let crate::config::ResultGate::Agent(ref name) = g.gate {
-                                config.subagents.get(name.as_str())
+                                config.subagents.get(name.as_str()).map(|cfg| (name.clone(), cfg))
                             } else {
                                 None
                             }
                         });
+                    let gate_spawn_id = format!("gate-{}", spawned.spawn_id);
+                    if let Some((ref gate_agent_name, _)) = gate_agent_info {
+                        frontend.render_worker_started(&gate_spawn_id, gate_agent_name).await;
+                    }
+                    let gate_subagent_config = gate_agent_info.as_ref().map(|(_, cfg)| *cfg);
                     let outcome = crate::policy::gate::apply_result_gate_with_subagent(
                         &config.approval,
                         &subagent_name,
@@ -315,6 +322,9 @@ pub async fn run(
                         config.tools.shell.max_output_bytes,
                     )
                     .await?;
+                    if gate_agent_info.is_some() {
+                        frontend.render_worker_finished(&gate_spawn_id, outcome.exit_code).await;
+                    }
                     // @end-chunk
 
                     let msg = CoreMessage::SpawnResult {
