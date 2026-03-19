@@ -27,6 +27,7 @@ When done, write a single JSON object to stdout as your final response:
   "status": "success | failure | blocked | handover",
   "branch": "<branch you worked on>",
   "base_revision": "<git rev-parse HEAD before your changes>",
+  "task_prompt": "<the full task description from your input>",
   "summary": "one-line description of what was done",
   "error": "error description if status is failure",
   "failure_kind": "implementation | push_failed",
