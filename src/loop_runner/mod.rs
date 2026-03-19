@@ -27,8 +27,8 @@ use crate::spawn::{SpawnDispatcher, SpawnedResult};
 
 use request::handle_request;
 use util::{
-    debug_log, format_orchestrator_exit_detail, parse_worker_output, persist_session_state,
-    render_worker_debug_chunk, write_message,
+    debug_log, format_orchestrator_exit_detail, format_spawn_failure_detail, parse_worker_output,
+    persist_session_state, render_worker_debug_chunk, write_message,
 };
 
 fn new_id(prefix: &str) -> String {
@@ -327,12 +327,26 @@ pub async fn run(
                     }
                     // @end-chunk
 
+                    let failure_detail = if outcome.exit_code != 0 {
+                        format_spawn_failure_detail(&outcome.output)
+                    } else {
+                        None
+                    };
+
                     let msg = CoreMessage::SpawnResult {
                         id: spawned.spawn_id.clone(),
                         exit_code: outcome.exit_code,
                         output: outcome.output,
                         truncated: if spawned.result.truncated { Some(true) } else { None },
                     };
+                    if let Some(detail) = failure_detail {
+                        frontend
+                            .render_notify(
+                                &format!("Worker failure detail: {} ({})", spawned.spawn_id, detail),
+                                "warning",
+                            )
+                            .await;
+                    }
                     write_message(&mut orch_stdin, &msg).await?;
                 }
                 // @chunk loop-runner/worker-events

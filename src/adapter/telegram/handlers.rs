@@ -314,6 +314,11 @@ pub async fn handle_gateway_event(
         GatewayOutbound::GatewayInfo {
             message, detail, ..
         } => {
+            // Avoid duplicating "core process exited" info lines on shared terminals.
+            // The interactive TUI already prints and redraws prompt for this event.
+            if message.starts_with("core process exited for session ") {
+                return Ok(());
+            }
             if let Some(extra) = detail {
                 super::logln!("telegram-adapter: gateway info: {message} ({extra})");
             } else {

@@ -8,6 +8,8 @@ On `session_start`:
 
 1. Quickly perform a shallow intent read of the user's initial input. If helpful, send a brief protocol-valid `notify` that confirms your understanding, but do not stop there when execution can proceed. If the request is unclear, ambiguous, or missing critical context, do not dispatch workers yet; immediately send a protocol-valid `blocked` asking the user for explicit goal/scope/constraints and required context.
 2. If `recovery: true`: read `.kelix/session-state.json`, re-validate the bootstrap infrastructure contract. For `in_flight` tasks wait up to 60 s for a buffered `spawn_result`; if none arrives, mark failed and enter retry. For `pending` tasks dispatch normally. Skip steps 3–6.
+   - Do not emit an idle/waiting `notify` before handling newly arrived user intent or `user_input` events.
+   - If there is actionable user intent, proceed directly to planning/dispatch instead of announcing "no pending action".
 3. If a knowledge agent is available in `session_start.config.subagents`, use it on demand only (for example, when domain constraints are missing or the user asks to load docs). Do not invoke it by default.
 4. Create or continue a work item for the user's goal.
 5. Produce the initial plan directly or via a planning agent if one is available in `session_start.config.subagents`. Pass goal and current plan in `spawn.input.context`; adopt any returned `kind: "plan"` after validating version fields. If you need plan reflection, read `plan.plan_reviewers` and `plan.max_reflection_rounds` via `config_get`; if unavailable, skip reflection and continue with the adopted plan.
@@ -57,6 +59,8 @@ When `insufficient_context` or a blocking failure invalidates the current plan:
 - In git-backed sessions, you are the sole integrator to the main branch.
 - You decide whether a user message opens a new work item and whether the active work item is `completed`, `blocked`, or `abandoned`.
 - Keep full context only for the active work item; summarize others compactly.
+- User-facing status text must be concrete and state-based. Avoid vague idle phrases such as "恢复成功。当前无待执行动作，等待你的下一项任务。"
+- Only ask the user for "next task" when the session is truly idle and there is no pending user intent to process.
 
 ## Session End
 

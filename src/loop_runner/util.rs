@@ -55,6 +55,50 @@ pub fn truncate_for_debug(s: &str, max_chars: usize) -> String {
     out
 }
 
+// @chunk loop-runner/spawn-failure-detail
+// Build a deterministic, field-based failure detail string from worker output.
+// No NLP/inference: only structured keys are surfaced in a fixed order.
+pub fn format_spawn_failure_detail(output: &serde_json::Value) -> Option<String> {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(obj) = output.as_object() {
+        if let Some(v) = obj.get("failure_kind").and_then(|v| v.as_str()) {
+            parts.push(format!("failure_kind={v}"));
+        }
+        if let Some(v) = obj.get("blocked_reason").and_then(|v| v.as_str()) {
+            parts.push(format!("blocked_reason={v}"));
+        }
+        if let Some(v) = obj.get("error").and_then(|v| v.as_str()) {
+            parts.push(format!("error={}", truncate_for_debug(v, 400)));
+        }
+        if let Some(v) = obj.get("summary").and_then(|v| v.as_str()) {
+            parts.push(format!("summary={}", truncate_for_debug(v, 400)));
+        }
+        if let Some(v) = obj.get("gate_output") {
+            let gate_output = match serde_json::to_string(v) {
+                Ok(s) => s,
+                Err(_) => "<unserializable>".to_string(),
+            };
+            parts.push(format!(
+                "gate_output={}",
+                truncate_for_debug(&gate_output, 800)
+            ));
+        }
+    } else if let Some(s) = output.as_str() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            parts.push(format!("output={}", truncate_for_debug(trimmed, 800)));
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("; "))
+    }
+}
+// @end-chunk
+
 /// Write a single JSON message followed by a newline to the orchestrator's stdin.
 pub async fn write_message(stdin: &mut ChildStdin, msg: &CoreMessage) -> Result<(), CoreError> {
     let mut line = serde_json::to_vec(msg)?;
@@ -203,5 +247,26 @@ mod tests {
 
         assert!(detail.contains("failed to spawn claude"));
         assert!(detail.contains("auth mounts"));
+    }
+
+    #[test]
+    fn test_format_spawn_failure_detail_uses_structured_fields() {
+        let output = serde_json::json!({
+            "status": "failure",
+            "failure_kind": "implementation",
+            "error": "result gate rejected by agent",
+            "gate_output": {"status":"failure","summary":"needs tests"}
+        });
+        let detail = format_spawn_failure_detail(&output).expect("expected detail");
+        assert!(detail.contains("failure_kind=implementation"));
+        assert!(detail.contains("error=result gate rejected by agent"));
+        assert!(detail.contains("gate_output={\"status\":\"failure\",\"summary\":\"needs tests\"}"));
+    }
+
+    #[test]
+    fn test_format_spawn_failure_detail_for_string_output() {
+        let output = serde_json::Value::String("plain failure text".to_string());
+        let detail = format_spawn_failure_detail(&output).expect("expected detail");
+        assert_eq!(detail, "output=plain failure text");
     }
 }

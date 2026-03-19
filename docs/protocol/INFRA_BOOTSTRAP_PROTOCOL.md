@@ -1,7 +1,7 @@
 # Infra Bootstrap Protocol
 
 Status: Proposal
-Last updated: March 6, 2026
+Last updated: March 19, 2026
 
 This document defines orchestrator behavior during infra bootstrap. For the concept overview, see [INFRA_BOOTSTRAP.md](../INFRA_BOOTSTRAP.md).
 
@@ -11,12 +11,12 @@ Shell gate policy applies only to commands executed through the core shell execu
 
 Use the following mapping for bootstrap actions:
 
-| Bootstrap action | `approve kind` | Notes |
+| Bootstrap action | Core request | Notes |
 |---|---|---|
-| Execute a shell command (build, apply, push) | `shell` | Routed by `shell_gate` |
-| Propose the full bootstrap step plan before execution | `plan` | Routed by `plan_gate`; get one approval before any steps run |
+| Execute a shell command (build, apply, push) | `approve kind="shell"` | Routed by `shell_gate` |
+| Propose the full bootstrap step plan before any steps run | `blocked` | Use `blocked` to collect one free-form human confirmation on scope/order/rollback before execution begins |
 | Propose a config change (image tag, rollout target) requiring free-form input | `blocked` | Use when the decision cannot be expressed as a fixed option list |
-| Propose a config change with a fixed option set | `shell` | Include the proposed change in `message`; use `options` for approve/reject/rollback |
+| Propose a config change with a fixed option set | `approve kind="shell"` | Include the proposed change in `message`; use `options` for approve/reject/rollback |
 
 ## 2. Bootstrap Contract Checklist
 
