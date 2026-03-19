@@ -129,9 +129,21 @@ pub async fn apply_result_gate_with_subagent(
             // Immediately drop cancel_tx — we never cancel gate agent spawns.
             drop(cancel_tx);
 
+            // Wrap the worker output as a SpawnInput so the gate agent goes through
+            // kelix-worker normally (runtime contract injection, output parsing, etc.).
+            // The prompt field carries the full worker output JSON as a string;
+            // context fields are extracted from the output for kelix-worker bookkeeping.
+            let task_id = output.get("task_id").and_then(|v| v.as_str()).unwrap_or("");
+            let branch = output.get("branch").and_then(|v| v.as_str()).unwrap_or("");
+            let prompt_str = serde_json::to_string(&output).unwrap_or_default();
+            let gate_input = serde_json::json!({
+                "prompt": prompt_str,
+                "context": { "task_id": task_id, "branch": branch }
+            });
+
             let gate_result: ProcessResult = run_subagent_process(
                 subagent,
-                &output,
+                &gate_input,
                 None,
                 cancel_rx,
                 max_output_bytes,
